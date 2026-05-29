@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import type { ChangeEvent, DragEvent, FormEvent, ReactNode } from "react";
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import { Activity, ArrowDown, ArrowUp, Copy, Crown, Database, FilePenLine, ImagePlus, ListChecks, Plus, RadioTower, Save, Trash2, Upload, Users, X, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { ContestEntryView, ContestView } from "@/lib/types";
@@ -327,7 +327,10 @@ export function AdminWorkbench({ contests, activityLogs }: { contests: ContestVi
           <div className="control-room-row-three">
             <Panel id="actions" className="control-room-equal-card" icon={<Zap className="size-6" />} title="Quick Actions">
               <div className="mt-4 grid gap-3">
-                <Button type="button" variant="ghost" disabled={!activeContest || isPending} onClick={() => deleteContest(activeContest?.id, submitJson, setMessage, startTransition, refreshContests)}><Trash2 className="size-4" /> Delete</Button>
+                <Button type="button" disabled={!activeContest || isPending} onClick={() => updateContestVisibility(activeContest, "PUBLIC", submitJson, setMessage, startTransition, refreshContests)}><Upload className="size-4" /> Publish Contest</Button>
+                <Button type="button" variant="ghost" disabled={!activeContest || isPending} onClick={() => updateContestVisibility(activeContest, "PRIVATE", submitJson, setMessage, startTransition, refreshContests)}><X className="size-4" /> Unpublish Contest</Button>
+                <Button type="button" variant="ghost" disabled={!activeContest || isPending} onClick={() => recalculateContest(activeContest?.id, submitJson, setMessage, startTransition, refreshContests)}><Database className="size-4" /> Recalculate Standings</Button>
+                <Button type="button" variant="danger" disabled={!activeContest || isPending} onClick={() => deleteContest(activeContest?.id, submitJson, setMessage, startTransition, refreshContests)}><Trash2 className="size-4" /> Delete Contest</Button>
               </div>
             </Panel>
 
@@ -366,6 +369,12 @@ function CloudinaryUploader({ name, title, kind, ratio, contestId, initialUrl, d
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
   const [lastFile, setLastFile] = useState<File | null>(null);
+  const [previewUrl, setPreviewUrl] = useState("");
+  const displayUrl = previewUrl || url;
+
+  useEffect(() => () => {
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+  }, [previewUrl]);
 
   function upload(file?: File) {
     setError("");
@@ -380,6 +389,10 @@ function CloudinaryUploader({ name, title, kind, ratio, contestId, initialUrl, d
       return onMessage("Image must be 8MB or smaller.");
     }
     setLastFile(file);
+    setPreviewUrl((current) => {
+      if (current) URL.revokeObjectURL(current);
+      return URL.createObjectURL(file);
+    });
     const form = new FormData();
     form.append("file", file);
     form.append("kind", kind);
@@ -398,6 +411,10 @@ function CloudinaryUploader({ name, title, kind, ratio, contestId, initialUrl, d
       }
       if (request.status >= 200 && request.status < 300) {
         setUrl(payload.url ?? "");
+        setPreviewUrl((current) => {
+          if (current) URL.revokeObjectURL(current);
+          return "";
+        });
         setProgress(100);
         onMessage(contestId ? `${title} uploaded and attached.` : `${title} uploaded. Save contest to persist it.`);
       } else {
@@ -418,6 +435,10 @@ function CloudinaryUploader({ name, title, kind, ratio, contestId, initialUrl, d
   async function remove() {
     if (disabled) return;
     setUrl("");
+    setPreviewUrl((current) => {
+      if (current) URL.revokeObjectURL(current);
+      return "";
+    });
     setProgress(0);
     setError("");
     if (!contestId) {
@@ -466,7 +487,13 @@ function CloudinaryUploader({ name, title, kind, ratio, contestId, initialUrl, d
           upload(event.dataTransfer.files?.[0]);
         }}
       >
-        {url ? <Image src={url} alt={title} width={640} height={420} className="max-h-56 w-full object-cover" /> : error || (disabled ? "Click Edit Contest to replace artwork" : "Drop artwork here or use upload")}
+        {displayUrl ? (
+          previewUrl ? (
+            <div role="img" aria-label={title} className="h-56 w-full bg-cover bg-center" style={{ backgroundImage: `url("${displayUrl}")` }} />
+          ) : (
+            <Image src={displayUrl} alt={title} width={640} height={420} className="max-h-56 w-full object-cover" />
+          )
+        ) : error || (disabled ? "Click Edit Contest to replace artwork" : "Drop artwork here or use upload")}
       </div>
       {uploading && <div className="mt-3 h-2 overflow-hidden bg-zinc-900"><div className="h-full bg-[#9AFF00]" style={{ width: `${progress}%` }} /></div>}
       {error && <p className="mt-3 text-sm text-red-200">{error}</p>}
@@ -775,6 +802,53 @@ function saveProblems(id: string, problems: ProblemDraft[], submitJson: (endpoin
       setMessage("Problem labels and first solves saved.");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Unable to save first solves.");
+    }
+  });
+}
+
+function contestPayload(contest: ContestView, overrides: Partial<ContestView> = {}) {
+  const next = { ...contest, ...overrides };
+  return {
+    title: next.title,
+    description: next.description,
+    invitePoster: next.invitePoster ?? "",
+    bannerPoster: next.bannerPoster ?? "",
+    contestBanner: next.contestBanner ?? "",
+    platform: next.platform,
+    contestLink: next.contestLink ?? "",
+    startTime: next.startTime,
+    duration: next.duration,
+    status: next.status,
+    visibility: next.visibility,
+    scoringSystem: next.scoringSystem,
+    prizePool: next.prizePool ?? "",
+    totalPoints: next.totalPoints,
+    coordinators: next.coordinators.map(({ name, role, email, phone, discord }) => ({ name, role, email, phone, discord })),
+  };
+}
+
+function updateContestVisibility(contest: ContestView | undefined, visibility: ContestView["visibility"], submitJson: (endpoint: string, body: Record<string, unknown>, method?: string) => Promise<unknown>, setMessage: (message: string) => void, startTransition: (callback: () => void) => void, refreshContests: (id?: string) => Promise<void>) {
+  if (!contest) return;
+  startTransition(async () => {
+    try {
+      await submitJson(`/api/admin/contests/${contest.id}`, contestPayload(contest, { visibility }), "PATCH");
+      await refreshContests(contest.id);
+      setMessage(visibility === "PUBLIC" ? "Contest published." : "Contest unpublished and hidden from public lists.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Unable to update contest visibility.");
+    }
+  });
+}
+
+function recalculateContest(id: string | undefined, submitJson: (endpoint: string, body: Record<string, unknown>, method?: string) => Promise<unknown>, setMessage: (message: string) => void, startTransition: (callback: () => void) => void, refreshContests: (id?: string) => Promise<void>) {
+  if (!id) return;
+  startTransition(async () => {
+    try {
+      await submitJson(`/api/admin/contests/${id}/entries`, { action: "recalculate" }, "PATCH");
+      await refreshContests(id);
+      setMessage("Standings, player stats, and leaderboard ledgers recalculated.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Unable to recalculate standings.");
     }
   });
 }

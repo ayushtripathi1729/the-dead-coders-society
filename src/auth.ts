@@ -11,28 +11,38 @@ const credentialsSchema = z.object({
   password: z.string().min(8),
 });
 
+function adminDiagnostic(message: string, metadata?: Record<string, unknown>) {
+  if (process.env.NODE_ENV === "production") return;
+  console.info(`[admin-auth] ${message}`, metadata ?? "");
+}
+
 async function ensureBootstrapAdmin() {
   const email = process.env.ADMIN_EMAIL;
   const passwordHash = process.env.ADMIN_PASSWORD_HASH;
 
-  if (!email || !passwordHash) return null;
+  if (!email || !passwordHash) {
+    adminDiagnostic("bootstrap skipped: ADMIN_EMAIL or ADMIN_PASSWORD_HASH is missing");
+    return null;
+  }
 
   const existing = await prisma.admin.findUnique({ where: { email } });
   if (existing) return existing;
 
-  return prisma.admin.create({
+  const admin = await prisma.admin.create({
     data: {
       email,
       name: "The Dead Coders Society Admin",
       passwordHash,
     },
   });
+  adminDiagnostic("bootstrap admin created", { email });
+  return admin;
 }
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
   trustHost: true,
   secret: process.env.AUTH_SECRET ?? process.env.NEXTAUTH_SECRET,
-  session: { strategy: "jwt" },
+  session: { strategy: "jwt", maxAge: 8 * 60 * 60, updateAge: 30 * 60 },
   pages: {
     signIn: "/controlroomadmin",
   },
@@ -44,24 +54,17 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         password: { label: "Password", type: "password" },
       },
       async authorize(rawCredentials) {
-        console.log("========== LOGIN ATTEMPT ==========");
-
         const parsed = credentialsSchema.safeParse(rawCredentials);
 
-        console.log("STEP 1 - VALIDATION:", parsed.success);
-
         if (!parsed.success) {
-          console.log("FAILED: Invalid email/password format");
+          adminDiagnostic("login rejected: invalid credential shape");
           return null;
         }
 
-        console.log("EMAIL ENTERED:", parsed.data.email);
-
         try {
           await ensureBootstrapAdmin();
-          console.log("STEP 2 - Bootstrap admin completed");
         } catch (error) {
-          console.error("BOOTSTRAP ERROR:", error);
+          adminDiagnostic("bootstrap failed", { error: error instanceof Error ? error.message : "unknown" });
           return null;
         }
 
@@ -69,32 +72,22 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           where: { email: parsed.data.email },
         });
 
-        console.log("STEP 3 - ADMIN FOUND:", !!admin);
-
         if (!admin) {
-          console.log("FAILED: Admin not found");
+          adminDiagnostic("login rejected: admin not found", { email: parsed.data.email });
           return null;
         }
-
-        console.log("ADMIN EMAIL IN DB:", admin.email);
-        console.log(
-          "PASSWORD HASH PREFIX:",
-          admin.passwordHash?.substring(0, 7)
-        );
 
         const valid = await compare(
           parsed.data.password,
           admin.passwordHash
         );
 
-        console.log("STEP 4 - PASSWORD VALID:", valid);
-
         if (!valid) {
-          console.log("FAILED: Password mismatch");
+          adminDiagnostic("login rejected: password mismatch", { email: parsed.data.email });
           return null;
         }
 
-        console.log("STEP 5 - LOGIN SUCCESS");
+        adminDiagnostic("login accepted", { adminId: admin.id });
 
         return {
           id: admin.id,

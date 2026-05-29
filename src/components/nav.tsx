@@ -4,6 +4,7 @@ import { Code2 } from "lucide-react";
 export function Nav() {
   const links = [
     ["Contests", "/contests"],
+    ["Players", "/players"],
     ["Monthly", "/leaderboards/monthly"],
     ["Yearly", "/leaderboards/yearly"],
   ];

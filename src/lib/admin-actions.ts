@@ -4,6 +4,7 @@ import type { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { bonusForRank, finalContestScore, societyRatingDelta } from "@/lib/scoring";
+import { deleteFromCloudinary } from "@/server/uploads/cloudinary";
 
 const statusSchema = z.enum(["UPCOMING", "LIVE", "FINISHED"]);
 const visibilitySchema = z.enum(["PUBLIC", "PRIVATE", "ARCHIVED"]);
@@ -142,9 +143,11 @@ export async function createOrUpdateContest(input: unknown, id?: string, adminId
 }
 
 export async function deleteContest(id: string, adminId?: string) {
+  const assets = await prisma.uploadAsset.findMany({ where: { contestId: id }, select: { publicId: true } });
   const contest = await prisma.contest.delete({ where: { id } });
   await refreshAllDerived();
   await logActivity(adminId, "contest.delete", "Contest", id, { title: contest.title });
+  await Promise.all(assets.map((asset) => deleteFromCloudinary(asset.publicId).catch(() => undefined)));
   return contest;
 }
 
