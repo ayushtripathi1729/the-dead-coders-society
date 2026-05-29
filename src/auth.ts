@@ -44,15 +44,57 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         password: { label: "Password", type: "password" },
       },
       async authorize(rawCredentials) {
+        console.log("========== LOGIN ATTEMPT ==========");
+
         const parsed = credentialsSchema.safeParse(rawCredentials);
-        if (!parsed.success) return null;
 
-        await ensureBootstrapAdmin();
-        const admin = await prisma.admin.findUnique({ where: { email: parsed.data.email } });
-        if (!admin) return null;
+        console.log("STEP 1 - VALIDATION:", parsed.success);
 
-        const valid = await compare(parsed.data.password, admin.passwordHash);
-        if (!valid) return null;
+        if (!parsed.success) {
+          console.log("FAILED: Invalid email/password format");
+          return null;
+        }
+
+        console.log("EMAIL ENTERED:", parsed.data.email);
+
+        try {
+          await ensureBootstrapAdmin();
+          console.log("STEP 2 - Bootstrap admin completed");
+        } catch (error) {
+          console.error("BOOTSTRAP ERROR:", error);
+          return null;
+        }
+
+        const admin = await prisma.admin.findUnique({
+          where: { email: parsed.data.email },
+        });
+
+        console.log("STEP 3 - ADMIN FOUND:", !!admin);
+
+        if (!admin) {
+          console.log("FAILED: Admin not found");
+          return null;
+        }
+
+        console.log("ADMIN EMAIL IN DB:", admin.email);
+        console.log(
+          "PASSWORD HASH PREFIX:",
+          admin.passwordHash?.substring(0, 7)
+        );
+
+        const valid = await compare(
+          parsed.data.password,
+          admin.passwordHash
+        );
+
+        console.log("STEP 4 - PASSWORD VALID:", valid);
+
+        if (!valid) {
+          console.log("FAILED: Password mismatch");
+          return null;
+        }
+
+        console.log("STEP 5 - LOGIN SUCCESS");
 
         return {
           id: admin.id,
