@@ -1,36 +1,77 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# The Dead Coders Society
 
-## Getting Started
+Production-grade competitive programming championship platform built with Next.js 15, PostgreSQL, Prisma, Auth.js, TailwindCSS, Framer Motion, shadcn-style primitives, Recharts, Zod, and Cloudinary.
 
-First, run the development server:
+## Environment
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+Create `.env` from `.env.example`:
+
+```env
+DATABASE_URL=
+DIRECT_URL=
+AUTH_SECRET=
+NEXTAUTH_SECRET=
+NEXTAUTH_URL=http://localhost:3000
+ADMIN_EMAIL=
+ADMIN_PASSWORD_HASH=
+CLOUDINARY_CLOUD_NAME=
+CLOUDINARY_API_KEY=
+CLOUDINARY_API_SECRET=
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Use PostgreSQL only. In production, set `DATABASE_URL` to the pooled Neon connection string and `DIRECT_URL` to the direct connection string used by Prisma migrations.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Local Setup
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+npm install
+npm run db:generate
+npm run db:push
+npm run dev
+```
 
-## Learn More
+Open `http://localhost:3000`. The private admin route is `/controlroomadmin`. The first admin user is bootstrapped from `ADMIN_EMAIL` and `ADMIN_PASSWORD_HASH`.
 
-To learn more about Next.js, take a look at the following resources:
+Generate the password hash with:
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```bash
+node -e "const bcrypt=require('bcryptjs'); bcrypt.hash('replace-with-admin-password', 12).then(console.log)"
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Neon PostgreSQL
 
-## Deploy on Vercel
+1. Create a Neon project.
+2. Copy the pooled PostgreSQL connection string.
+3. Set pooled `DATABASE_URL` and direct `DIRECT_URL` in `.env` and Vercel.
+4. Run `npm run db:push` locally or from a deployment job.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Vercel Deployment
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+1. Import the repository into Vercel.
+2. Set all required environment variables.
+3. Use the default Next.js build command: `npm run build`.
+4. Set `NEXTAUTH_URL` to the production URL.
+5. Keep `AUTH_SECRET` and `NEXTAUTH_SECRET` long, random, and private.
+
+## Admin Capabilities
+
+- Create, edit, and delete contests through protected admin API routes.
+- Upload invite posters, contest banners, certificates, profile images, logos, and editorials to Cloudinary.
+- Import standings from CSV, pasted tables, copied HTML table text, and Codeforces public contests.
+- Correct ranks, scores, penalties, solved counts, first solves, names, usernames, and years.
+
+## Scoring
+
+```ts
+finalScore = (contestPoints - penalty) + bonusPoints
+```
+
+Bonus points:
+
+- 1st: +500
+- 2nd: +250
+- 3rd: +125
+- 4th: +50
+- 5th: +25
+
+Society ELO is recalculated from placement, solved count, field size, final score, podium pressure, and first solves.

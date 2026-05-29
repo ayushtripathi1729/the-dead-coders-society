@@ -1,0 +1,211 @@
+import "server-only";
+
+import type { Contest, ContestCoordinator, ContestProblem, ContestStanding, FirstSolve, Player, ProblemFirstSolve } from "@prisma/client";
+import { prisma } from "@/lib/prisma";
+import type { ContestStatus, ContestView, LeaderboardRow } from "@/lib/types";
+
+type EntryWithPlayer = ContestStanding & { player: Player };
+type FirstSolveWithPlayer = FirstSolve & { player: Player };
+type ContestWithEntries = Contest & {
+  standings: EntryWithPlayer[];
+  coordinators: ContestCoordinator[];
+  firstSolvesRows: FirstSolveWithPlayer[];
+  problems: (ContestProblem & { firstSolves: (ProblemFirstSolve & { player: Player })[] })[];
+};
+
+function toContestView(contest: ContestWithEntries): ContestView {
+  return {
+    id: contest.id,
+    slug: contest.slug,
+    title: contest.title,
+    description: contest.description,
+    invitePoster: contest.invitePoster,
+    bannerPoster: contest.bannerPoster,
+    contestBanner: contest.contestBanner,
+    platform: contest.platform,
+    contestLink: contest.contestLink,
+    startTime: contest.startTime.toISOString(),
+    duration: contest.duration,
+    status: contest.status as ContestStatus,
+    updatedAt: contest.updatedAt.toISOString(),
+    visibility: contest.visibility,
+    scoringSystem: contest.scoringSystem,
+    prizePool: contest.prizePool,
+    standingsFinalizedAt: contest.standingsFinalizedAt?.toISOString() ?? null,
+    totalPoints: contest.totalPoints,
+    coordinators: contest.coordinators.map((coordinator) => ({
+      id: coordinator.id,
+      name: coordinator.name,
+      role: coordinator.role,
+      email: coordinator.email,
+      phone: coordinator.phone,
+      discord: coordinator.discord,
+    })),
+    firstSolveRows: contest.firstSolvesRows
+      .sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime())
+      .map((firstSolve) => ({
+        id: firstSolve.id,
+        problemCode: firstSolve.problemCode,
+        timestamp: firstSolve.timestamp.toISOString(),
+        pointsAwarded: firstSolve.pointsAwarded,
+        player: { username: firstSolve.player.username, fullName: firstSolve.player.fullName },
+      })),
+    problems: contest.problems
+      .sort((a, b) => a.sortOrder - b.sortOrder || a.code.localeCompare(b.code))
+      .map((problem) => ({
+        id: problem.id,
+        code: problem.code,
+        title: problem.title,
+        sortOrder: problem.sortOrder,
+        firstSolves: problem.firstSolves.map((firstSolve) => ({
+          id: firstSolve.id,
+          player: { username: firstSolve.player.username, fullName: firstSolve.player.fullName },
+        })),
+      })),
+    entries: contest.standings
+      .sort((a, b) => a.rank - b.rank)
+      .map((entry) => ({
+        id: entry.id,
+        username: entry.player.username,
+        fullName: entry.player.fullName,
+        year: entry.player.year,
+        rank: entry.rank,
+        solved: entry.solved,
+        penalty: entry.penalty,
+        rawScore: entry.rawScore,
+        bonusPoints: entry.bonusPoints,
+        finalScore: entry.finalScore,
+        firstSolves: entry.firstSolves,
+      })),
+  };
+}
+
+const contestInclude = {
+  standings: { include: { player: true } },
+  coordinators: true,
+  firstSolvesRows: { include: { player: true } },
+  problems: { include: { firstSolves: { include: { player: true } } } },
+};
+
+export async function listContests({ includeHidden = false } = {}) {
+  const contests = await prisma.contest.findMany({
+    where: includeHidden ? undefined : { visibility: { not: "PRIVATE" } },
+    include: contestInclude,
+    orderBy: { startTime: "desc" },
+  });
+  return contests.map(toContestView);
+}
+
+export async function getContest(idOrSlug: string) {
+  const contest = await prisma.contest.findFirst({
+    where: { OR: [{ id: idOrSlug }, { slug: idOrSlug }] },
+    include: contestInclude,
+  });
+  return contest ? toContestView(contest) : null;
+}
+
+function aggregate(entries: EntryWithPlayer[]): LeaderboardRow[] {
+  const rows = new Map<string, Omit<LeaderboardRow, "rank" | "averagePlacement" | "bestPlacement"> & { placements: number; bestPlacement: number }>();
+  for (const item of entries) {
+    const current = rows.get(item.player.username) ?? {
+      username: item.player.username,
+      fullName: item.player.fullName,
+      year: item.player.year,
+      totalScore: 0,
+      contests: 0,
+      wins: 0,
+      podiums: 0,
+      solved: 0,
+      penalty: 0,
+      firstSolves: 0,
+      rating: item.player.currentRating,
+      placements: 0,
+      bestPlacement: Number.MAX_SAFE_INTEGER,
+    };
+    current.totalScore += item.finalScore;
+    current.contests += 1;
+    current.wins += item.rank === 1 ? 1 : 0;
+    current.podiums += item.rank <= 3 ? 1 : 0;
+    current.solved += item.solved;
+    current.penalty += item.penalty;
+    current.firstSolves += item.firstSolves;
+    current.placements += item.rank;
+    current.bestPlacement = Math.min(current.bestPlacement, item.rank);
+    rows.set(item.player.username, current);
+  }
+
+  return [...rows.values()]
+    .sort((a, b) => b.totalScore - a.totalScore || b.wins - a.wins || a.penalty - b.penalty)
+    .map((row, index) => ({
+      ...row,
+      rank: index + 1,
+      averagePlacement: Number((row.placements / row.contests).toFixed(1)),
+      bestPlacement: row.bestPlacement === Number.MAX_SAFE_INTEGER ? 0 : row.bestPlacement,
+    }));
+}
+
+export async function monthlyLeaderboard(year: number, month: number) {
+  const start = new Date(Date.UTC(year, month - 1, 1));
+  const end = new Date(Date.UTC(year, month, 1));
+  const contests = await prisma.contest.findMany({
+    where: { startTime: { gte: start, lt: end }, visibility: { not: "PRIVATE" }, standingsFinalizedAt: { not: null } },
+    include: contestInclude,
+    orderBy: { startTime: "asc" },
+  });
+  return { contests: contests.map(toContestView), rows: aggregate(contests.flatMap((contest) => contest.standings)) };
+}
+
+export async function yearlyLeaderboard(year: number) {
+  const start = new Date(Date.UTC(year, 0, 1));
+  const end = new Date(Date.UTC(year + 1, 0, 1));
+  const contests = await prisma.contest.findMany({
+    where: { startTime: { gte: start, lt: end }, visibility: { not: "PRIVATE" }, standingsFinalizedAt: { not: null } },
+    include: contestInclude,
+    orderBy: { startTime: "asc" },
+  });
+  return { contests: contests.map(toContestView), rows: aggregate(contests.flatMap((contest) => contest.standings)) };
+}
+
+export async function getPlayer(username: string) {
+  const player = await prisma.player.findUnique({
+    where: { username },
+    include: {
+      standings: {
+        where: { contest: { standingsFinalizedAt: { not: null } } },
+        include: { contest: true },
+        orderBy: { contest: { startTime: "desc" } },
+      },
+      ratingHistory: { orderBy: { createdAt: "asc" } },
+      achievements: { orderBy: { earnedAt: "desc" } },
+      firstSolveRows: { include: { contest: true }, orderBy: { timestamp: "desc" } },
+      participations: { include: { contest: true }, orderBy: { contest: { startTime: "desc" } } },
+    },
+  });
+  if (!player) return null;
+
+  return {
+    username: player.username,
+    fullName: player.fullName,
+    year: player.year,
+    rating: player.currentRating,
+    peakRating: player.peakRating,
+    totalScore: player.totalScore,
+    currentRank: player.yearlyRank ?? 0,
+    yearlyRank: player.yearlyRank ?? 0,
+    monthlyRank: player.monthlyRank ?? 0,
+    wins: player.wins,
+    podiums: player.podiums,
+    firstSolves: player.firstSolves,
+    solved: player.totalSolved,
+    participationCount: player.contestsPlayed,
+    averagePlacement: player.averageRank ?? 0,
+    bestPlacement: player.bestRank ?? 0,
+    history: player.standings.map((entry) => ({ contest: entry.contest, entry })),
+    participations: player.participations,
+    ratings: player.ratingHistory,
+    achievements: player.achievements,
+    firstSolveHistory: player.firstSolveRows,
+    winrate: player.contestsPlayed ? Number(((player.wins / player.contestsPlayed) * 100).toFixed(1)) : 0,
+    ratingDeltaHistory: player.ratingHistory.map((rating) => ({ contestId: rating.contestId, delta: rating.delta, rating: rating.rating, createdAt: rating.createdAt.toISOString() })),
+  };
+}

@@ -1,0 +1,136 @@
+import { notFound } from "next/navigation";
+import type { ReactNode } from "react";
+import { BadgeCheck, BarChart3, Crown, Flame, Gauge, Trophy, Zap } from "lucide-react";
+import { ArenaBackground } from "@/components/arena-background";
+import { Nav } from "@/components/nav";
+import { PlayerChart } from "@/components/player-chart";
+import { yearLabel } from "@/lib/labels";
+import { getPlayer } from "@/lib/leaderboards";
+
+export const dynamic = "force-dynamic";
+
+export default async function PlayerPage({ params }: { params: Promise<{ username: string }> }) {
+  const { username } = await params;
+  const player = await getPlayer(decodeURIComponent(username));
+  if (!player) notFound();
+
+  const scoreChart = player.history.slice().reverse().map(({ contest, entry }) => ({ contest: contest.title.slice(0, 14), score: entry.bonusPoints }));
+  const ratingChart = player.ratings.length
+    ? player.ratings.map((rating, index) => ({ contest: `R${index + 1}`, score: rating.rating }))
+    : [{ contest: "Base", score: player.rating }];
+  const placementChart = player.history.slice().reverse().map(({ contest, entry }) => ({ contest: contest.title.slice(0, 14), score: entry.rank }));
+  const activityCells = Array.from({ length: 42 }, (_, index) => {
+    const entry = player.history[index % Math.max(player.history.length, 1)]?.entry;
+    return entry ? Math.min(4, Math.max(1, Math.ceil(entry.solved / 2))) : 0;
+  });
+
+  return (
+    <>
+      <ArenaBackground />
+      <Nav />
+      <main className="mx-auto w-full max-w-7xl px-4 pb-20 pt-28 sm:px-6">
+        <section className="section-band p-6 md:p-8">
+          <div className="flex flex-col justify-between gap-6 lg:flex-row lg:items-end">
+            <div>
+              <p className="engraved text-xs">Official Player Record</p>
+              <h1 data-text={player.fullName} className="glitch certificate-title mt-3 text-5xl text-white sm:text-7xl">{player.fullName}</h1>
+              <p className="mt-3 font-[family-name:var(--font-display)] text-xl uppercase text-[#9AFF00]">@{player.username}</p>
+              <p className="font-[family-name:var(--font-mono)] text-zinc-400">{yearLabel(player.year)} / Society ELO {player.rating}</p>
+              <div className="mt-4 flex flex-wrap gap-2">
+                {(player.achievements.length ? player.achievements : [{ title: "Registered Contender" }]).slice(0, 5).map((badge) => (
+                  <span key={badge.title} className="clip-arena inline-flex items-center gap-2 border border-[#9AFF00]/30 bg-[#9AFF00]/10 px-3 py-2 text-xs text-zinc-100">
+                    <BadgeCheck className="size-4 text-[#9AFF00]" />
+                    {badge.title}
+                  </span>
+                ))}
+              </div>
+            </div>
+            <div className="grid grid-cols-3 gap-3 sm:grid-cols-4">
+              <Metric label="Current Rank" value={player.currentRank || "N/A"} />
+              <Metric label="Monthly Rank" value={player.monthlyRank || "N/A"} />
+              <Metric label="Yearly Rank" value={player.yearlyRank || "N/A"} />
+              <Metric label="Best Rank" value={player.bestPlacement || "N/A"} />
+            </div>
+          </div>
+        </section>
+
+        <section className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <Metric icon={<Gauge className="size-5" />} label="Contests" value={player.participationCount} />
+          <Metric icon={<Zap className="size-5" />} label="Total Solves" value={player.solved} />
+          <Metric icon={<Trophy className="size-5" />} label="Total Score" value={player.totalScore} />
+          <Metric icon={<Crown className="size-5" />} label="Wins" value={player.wins} />
+          <Metric icon={<Flame className="size-5" />} label="Podiums" value={player.podiums} />
+          <Metric icon={<BarChart3 className="size-5" />} label="First Solves" value={player.firstSolves} />
+          <Metric label="Winrate" value={`${player.winrate}%`} />
+          <Metric label="Average Rank" value={player.averagePlacement || "N/A"} />
+          <Metric label="Best Rank" value={player.bestPlacement || "N/A"} />
+        </section>
+
+        <section className="mt-6 grid gap-6 lg:grid-cols-2">
+          <ChartPanel title="Rating Progression" data={ratingChart} />
+          <ChartPanel title="Score Progression" data={scoreChart} />
+          <ChartPanel title="Placement History" data={placementChart.length ? placementChart : [{ contest: "Base", score: 0 }]} />
+          <div className="section-band p-5">
+            <h2 className="section-rune font-[family-name:var(--font-display)] text-xl uppercase">Activity Heatmap</h2>
+            <div className="mt-5 grid grid-cols-7 gap-2">
+              {activityCells.map((level, index) => (
+                <div
+                  key={index}
+                  className="aspect-square border border-[#c0c0c0]/10"
+                  style={{ backgroundColor: level ? `rgba(154,255,0,${0.14 + level * 0.16})` : "rgba(255,255,255,.035)" }}
+                />
+              ))}
+            </div>
+          </div>
+        </section>
+
+        <section className="section-band mt-6 p-5">
+          <h2 className="section-rune font-[family-name:var(--font-display)] text-xl uppercase">Contest History</h2>
+          <div className="mt-5 grid gap-3">
+            {player.history.length ? player.history.map(({ contest, entry }) => (
+              <div key={contest.id} className="ledger-row">
+                <span className="font-[family-name:var(--font-display)] text-white">{contest.title}</span>
+                <span className="text-zinc-500">Rank #{entry.rank}</span>
+                <span className="text-zinc-500">{entry.solved} solved</span>
+                <span className="text-zinc-500">Penalty {entry.penalty}</span>
+                <span className="ml-auto font-[family-name:var(--font-display)] text-[#9AFF00]">{entry.bonusPoints} pts</span>
+              </div>
+            )) : <p className="text-sm text-zinc-500">No contest history recorded yet.</p>}
+          </div>
+        </section>
+
+        <section className="section-band mt-6 p-5">
+          <h2 className="section-rune font-[family-name:var(--font-display)] text-xl uppercase">First Solve History</h2>
+          <div className="mt-5 grid gap-3">
+            {player.firstSolveHistory.length ? player.firstSolveHistory.map((firstSolve) => (
+              <div key={firstSolve.id} className="ledger-row">
+                <span className="font-[family-name:var(--font-display)] text-white">{firstSolve.problemCode}</span>
+                <span className="text-zinc-500">{firstSolve.contest.title}</span>
+                <span className="ml-auto text-[#9AFF00]">{firstSolve.pointsAwarded} pts</span>
+              </div>
+            )) : <p className="text-sm text-zinc-500">No first solve history recorded yet.</p>}
+          </div>
+        </section>
+      </main>
+    </>
+  );
+}
+
+function Metric({ icon, label, value }: { icon?: ReactNode; label: string; value: ReactNode }) {
+  return (
+    <div className="clip-arena border border-[#c0c0c0]/15 bg-black/50 p-4">
+      <div className="text-[#9AFF00]">{icon}</div>
+      <p className="mt-2 text-[10px] uppercase tracking-[0.18em] text-zinc-500">{label}</p>
+      <p className="font-[family-name:var(--font-display)] text-2xl text-white">{value}</p>
+    </div>
+  );
+}
+
+function ChartPanel({ title, data }: { title: string; data: { contest: string; score: number }[] }) {
+  return (
+    <div className="section-band p-5">
+      <h2 className="section-rune font-[family-name:var(--font-display)] text-xl uppercase">{title}</h2>
+      <div className="mt-4 h-72"><PlayerChart data={data} /></div>
+    </div>
+  );
+}
