@@ -35,8 +35,8 @@ export async function POST(request: NextRequest) {
       data: {
         type: input.type,
         title: input.title,
-        playerUsername: player?.username,
-        contestId: input.contestId,
+        player: player ? { connect: { username: player.username } } : undefined,
+        contest: contest ? { connect: { id: contest.id } } : undefined,
         assetUrl: uploaded.url,
       },
     });
