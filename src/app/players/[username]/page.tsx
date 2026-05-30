@@ -29,10 +29,6 @@ export default async function PlayerPage({ params }: { params: Promise<{ usernam
     ? player.ratings.map((rating: PlayerRating, index: number): ChartPoint => ({ contest: `R${index + 1}`, score: rating.rating }))
     : [{ contest: "Base", score: player.rating }];
   const placementChart = player.history.slice().reverse().map(({ contest, entry }: PlayerHistoryItem): ChartPoint => ({ contest: contest.title.slice(0, 14), score: entry.rank }));
-  const activityCells = Array.from({ length: 42 }, (_, index) => {
-    const entry = player.history[index % Math.max(player.history.length, 1)]?.entry;
-    return entry ? Math.min(4, Math.max(1, Math.ceil(entry.solved / 2))) : 0;
-  });
 
   return (
     <>
@@ -80,18 +76,6 @@ export default async function PlayerPage({ params }: { params: Promise<{ usernam
           <ChartPanel title="Rating Progression" data={ratingChart} />
           <ChartPanel title="Score Progression" data={scoreChart} />
           <ChartPanel title="Placement History" data={placementChart.length ? placementChart : [{ contest: "Base", score: 0 }]} />
-          <div className="section-band p-5">
-            <h2 className="section-rune font-[family-name:var(--font-display)] text-xl uppercase">Activity Heatmap</h2>
-            <div className="mt-5 grid grid-cols-7 gap-2">
-              {activityCells.map((level, index) => (
-                <div
-                  key={index}
-                  className="aspect-square border border-[#c0c0c0]/10"
-                  style={{ backgroundColor: level ? `rgba(154,255,0,${0.14 + level * 0.16})` : "rgba(255,255,255,.035)" }}
-                />
-              ))}
-            </div>
-          </div>
         </section>
 
         <section className="section-band mt-6 p-5">

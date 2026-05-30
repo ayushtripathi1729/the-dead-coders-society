@@ -3,17 +3,19 @@
 import Image from "next/image";
 import type { ChangeEvent, DragEvent, FormEvent, ReactNode } from "react";
 import { useEffect, useMemo, useState, useTransition } from "react";
-import { Activity, Copy, Crown, Database, FilePenLine, ImagePlus, ListChecks, Plus, RadioTower, Save, Trash2, Upload, Users, X, Zap } from "lucide-react";
+import { Activity, Copy, Crown, Database, FilePenLine, ImagePlus, ListChecks, Plus, RadioTower, Save, Trash2, Upload, UserRound, Users, X, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { ContestEntryView, ContestView } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { formatDateUTC } from "@/lib/utils";
 
 type ActivityLogView = { id: string; action: string; entity: string; entityId: string | null; createdAt: string };
+type PlayerAdminView = { id: string; fullName: string; username: string; year: number; email: string | null; branchCourse: string | null; avatar: string | null; bio: string | null };
 type CoordinatorDraft = { name: string; role: string; email: string; phone: string; discord: string };
 type ProblemDraft = { code: string; title: string; points: number; firstSolveUsernames: string[] };
 type ContestCoordinatorView = ContestView["coordinators"][number];
 type ContestMutationResponse = { contest: { id: string } };
+type PlayerMutationResponse = { player: PlayerAdminView };
 type StandingsDraftResponse = { saved: number };
 type CodeforcesSyncResponse = { imported: number };
 type FinalizeStandingsResponse = { finalized?: boolean; rows?: number };
@@ -52,10 +54,12 @@ function problemDrafts(contest?: ContestView): ProblemDraft[] {
     : defaultProblems();
 }
 
-export function AdminWorkbench({ contests, activityLogs }: { contests: ContestView[]; activityLogs: ActivityLogView[] }) {
+export function AdminWorkbench({ contests, activityLogs, players }: { contests: ContestView[]; activityLogs: ActivityLogView[]; players: PlayerAdminView[] }) {
   const [contestList, setContestList] = useState(contests);
+  const [playerList, setPlayerList] = useState(players);
   const [message, setMessage] = useState("");
   const [selectedContest, setSelectedContest] = useState(contests[0]?.id ?? "");
+  const [selectedPlayer, setSelectedPlayer] = useState(players[0]?.username ?? "");
   const [isEditingContest, setIsEditingContest] = useState(false);
   const [coordinators, setCoordinators] = useState<CoordinatorDraft[]>(() => coordinatorDrafts(contests[0]));
   const [problems, setProblems] = useState<ProblemDraft[]>(() => problemDrafts(contests[0]));
@@ -86,6 +90,14 @@ export function AdminWorkbench({ contests, activityLogs }: { contests: ContestVi
     setProblems(problemDrafts(nextContest));
   }
 
+  async function refreshPlayers(nextSelectedUsername?: string) {
+    const response = await fetch("/api/admin/players", { cache: "no-store" });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error ?? "Unable to refresh players.");
+    setPlayerList(payload.players);
+    if (nextSelectedUsername !== undefined) setSelectedPlayer(nextSelectedUsername);
+  }
+
   function selectContest(id: string) {
     setSelectedContest(id);
     setIsEditingContest(!id);
@@ -101,7 +113,7 @@ export function AdminWorkbench({ contests, activityLogs }: { contests: ContestVi
       try {
         const body: Record<string, unknown> = Object.fromEntries(new FormData(form).entries());
         body.coordinators = coordinators.filter((coordinator) => coordinator.name && coordinator.phone && coordinator.role);
-        if (!activeContest?.standingsFinalizedAt) body.problems = problems;
+        body.problems = problems;
         const payload = await submitJson<ContestMutationResponse>(id ? `/api/admin/contests/${id}` : "/api/admin/contests", body, id ? "PATCH" : "POST");
         await refreshContests(payload.contest.id);
         setMessage(id ? "Contest updated. Refresh after final review to confirm public surfaces." : "Contest created. Upload assets or add standings next.");
@@ -208,7 +220,7 @@ export function AdminWorkbench({ contests, activityLogs }: { contests: ContestVi
                 <Field name="platform" placeholder="Organizer / group" defaultValue={activeContest?.platform ?? "Codeforces"} disabled={Boolean(activeContest && !isEditingContest)} />
                 <Field name="startTime" type="datetime-local" defaultValue={toLocalInput(activeContest?.startTime)} disabled={Boolean(activeContest && !isEditingContest)} required />
                 <Field name="duration" type="number" min={1} placeholder="Duration" defaultValue={activeContest?.duration ?? 120} disabled={Boolean(activeContest && !isEditingContest)} />
-                <Field type="number" min={1} max={26} placeholder="Number of problems" value={problems.length} disabled={Boolean(activeContest && (!isEditingContest || activeContest.standingsFinalizedAt))} onChange={(event) => setProblemCount(Number(event.target.value), problems, setProblems)} />
+                <Field type="number" min={1} max={26} placeholder="Number of problems" value={problems.length} disabled={Boolean(activeContest && !isEditingContest)} onChange={(event) => setProblemCount(Number(event.target.value), problems, setProblems)} />
                 <select name="visibility" className="terminal-field clip-arena min-w-0 truncate px-4 py-3 font-[family-name:var(--font-mono)] text-sm" defaultValue={activeContest?.visibility ?? "PUBLIC"} disabled={Boolean(activeContest && !isEditingContest)}>
                   <option value="PUBLIC">Public</option>
                   <option value="PRIVATE">Private</option>
@@ -218,7 +230,7 @@ export function AdminWorkbench({ contests, activityLogs }: { contests: ContestVi
                 <Field name="prizePool" placeholder="Prize title" defaultValue={activeContest?.prizePool ?? ""} disabled={Boolean(activeContest && !isEditingContest)} />
               </div>
 
-              <ContestProblemSetup problems={problems} setProblems={setProblems} disabled={Boolean(activeContest && (!isEditingContest || activeContest.standingsFinalizedAt))} />
+              <ContestProblemSetup problems={problems} setProblems={setProblems} disabled={Boolean(activeContest && !isEditingContest)} />
 
               <textarea name="description" placeholder="Contest description" rows={4} defaultValue={activeContest?.description} disabled={Boolean(activeContest && !isEditingContest)} className="terminal-field clip-arena min-w-0 resize-y overflow-hidden px-4 py-3 font-[family-name:var(--font-mono)] text-sm" />
 
@@ -261,6 +273,7 @@ export function AdminWorkbench({ contests, activityLogs }: { contests: ContestVi
                       const body = Object.fromEntries(new FormData(form).entries());
                       const payload = await submitJson<StandingsDraftResponse>(`/api/admin/contests/${body.contestId}/entries`, body);
                       await refreshContests(String(body.contestId));
+                      await refreshPlayers();
                       setMessage(`Saved ${payload.saved} standings rows and refreshed derived ledgers.`);
                     } catch (error) {
                       setMessage(error instanceof Error ? error.message : "Upload failed.");
@@ -270,7 +283,7 @@ export function AdminWorkbench({ contests, activityLogs }: { contests: ContestVi
               >
                 <input type="hidden" name="contestId" value={selectedContest} />
                 <textarea name="standingsText" rows={8} placeholder={"Full Name, username, penalty, solve vector\nAda Lovelace, ada_01, 120, [1,1,0,1,0]"} className="terminal-field clip-arena min-w-0 resize-y overflow-hidden px-4 py-3 font-[family-name:var(--font-mono)] text-sm" />
-                <Button type="submit" disabled={!selectedContest || isPending || Boolean(activeContest?.standingsFinalizedAt)}>{isPending ? "Processing..." : "Save Draft Standings"}</Button>
+                <Button type="submit" disabled={!selectedContest || isPending}>{isPending ? "Processing..." : "Save Draft Standings"}</Button>
               </form>
               <form
                 className="mt-4 grid gap-3 border-t border-white/10 pt-4"
@@ -280,6 +293,8 @@ export function AdminWorkbench({ contests, activityLogs }: { contests: ContestVi
                   startTransition(async () => {
                     try {
                       const response = await submitJson<CodeforcesSyncResponse>(`/api/admin/contests/${body.contestId}/sync-codeforces`, body);
+                      await refreshContests(String(body.contestId));
+                      await refreshPlayers();
                       setMessage(`Imported ${response.imported} Codeforces rows.`);
                     } catch (error) {
                       setMessage(error instanceof Error ? `${error.message} Use private upload for mashups.` : "Sync failed.");
@@ -297,15 +312,15 @@ export function AdminWorkbench({ contests, activityLogs }: { contests: ContestVi
                   <Users className="size-5 shrink-0" />
                   <h3 className="min-w-0 truncate whitespace-nowrap font-[family-name:var(--font-display)] text-sm uppercase tracking-[0.18em] text-white">Participant Standings</h3>
                 </div>
-                {activeContest ? <EntryEditor contestId={activeContest.id} finalized={Boolean(activeContest.standingsFinalizedAt)} entries={activeContest.entries} submitJson={submitJson} setMessage={setMessage} startTransition={startTransition} refreshContests={refreshContests} isPending={isPending} /> : <div className="mt-4"><Empty>No active contest selected.</Empty></div>}
+                {activeContest ? <EntryEditor contestId={activeContest.id} entries={activeContest.entries} submitJson={submitJson} setMessage={setMessage} startTransition={startTransition} refreshContests={refreshContests} refreshPlayers={refreshPlayers} isPending={isPending} /> : <div className="mt-4"><Empty>No active contest selected.</Empty></div>}
                 {activeContest && (
                   <Button
                     type="button"
                     className="mt-4 w-full"
-                    disabled={isPending || Boolean(activeContest.standingsFinalizedAt) || !activeContest.entries.length}
+                    disabled={isPending || !activeContest.entries.length}
                     onClick={() => finalizeStandings(activeContest.id, problems, submitJson, setMessage, startTransition, refreshContests)}
                   >
-                    <Save className="size-4" /> {activeContest.standingsFinalizedAt ? "Standings Finalized" : "Finalize Standings"}
+                    <Save className="size-4" /> {activeContest.standingsFinalizedAt ? "Refresh Finalized Ledgers" : "Finalize Standings"}
                   </Button>
                 )}
               </div>
@@ -321,6 +336,23 @@ export function AdminWorkbench({ contests, activityLogs }: { contests: ContestVi
                 <Operation label="Finalized" value={activeContest?.standingsFinalizedAt ? "YES" : "NO"} />
                 <Operation label="Last updated" value={activeContest ? formatDateUTC(activeContest.updatedAt) : "N/A"} />
               </div>
+              <div className="mt-5 border-t border-white/10 pt-5">
+                <div className="flex min-w-0 items-center gap-3 text-[#9AFF00]">
+                  <UserRound className="size-5 shrink-0" />
+                  <h3 className="min-w-0 truncate whitespace-nowrap font-[family-name:var(--font-display)] text-sm uppercase tracking-[0.18em] text-white">Player Editor</h3>
+                </div>
+                <PlayerEditor
+                  players={playerList}
+                  selectedPlayer={selectedPlayer}
+                  setSelectedPlayer={setSelectedPlayer}
+                  submitJson={submitJson}
+                  setMessage={setMessage}
+                  startTransition={startTransition}
+                  refreshPlayers={refreshPlayers}
+                  refreshContests={refreshContests}
+                  isPending={isPending}
+                />
+              </div>
           </Panel>
 
           <Panel id="problems" className="control-room-equal-card" icon={<ListChecks className="size-6" />} title="Problems & First Solves">
@@ -330,7 +362,6 @@ export function AdminWorkbench({ contests, activityLogs }: { contests: ContestVi
                     problems={problems}
                     entries={activeContest.entries}
                     setProblems={setProblems}
-                    finalized={Boolean(activeContest.standingsFinalizedAt)}
                     isPending={isPending}
                     onSave={() => saveProblems(activeContest.id, problems, submitJson, setMessage, startTransition, refreshContests)}
                   />
@@ -541,6 +572,9 @@ function CoordinatorEditor({ coordinators, setCoordinators, disabled = false }: 
 
 function ContestProblemSetup({ problems, setProblems, disabled }: { problems: ProblemDraft[]; setProblems: (problems: ProblemDraft[]) => void; disabled: boolean }) {
   const totalPoints = problems.reduce((sum, problem) => sum + problem.points, 0);
+  const [selectedProblemIndex, setSelectedProblemIndex] = useState(0);
+  const selectedIndex = Math.min(selectedProblemIndex, Math.max(0, problems.length - 1));
+  const selectedProblem = problems[selectedIndex];
 
   return (
     <div className="grid min-w-0 gap-3 overflow-hidden border border-[#9AFF00]/15 bg-black/30 p-3">
@@ -548,20 +582,30 @@ function ContestProblemSetup({ problems, setProblems, disabled }: { problems: Pr
         <p className="min-w-0 truncate whitespace-nowrap font-[family-name:var(--font-display)] text-sm uppercase text-white">Contest Problems</p>
         <p className="min-w-0 truncate whitespace-nowrap font-[family-name:var(--font-display)] text-[#9AFF00]">Total Contest Points: {totalPoints}</p>
       </div>
-      <div className="grid min-w-0 gap-2">
-        {problems.map((problem, index) => (
-          <div key={`${problem.code}-${index}`} className="grid min-w-0 gap-2 sm:grid-cols-[minmax(0,100px)_minmax(0,1fr)]">
-            <Field value={`Problem ${problem.code}`} disabled />
-            <Field
-              type="number"
-              min={1}
-              value={problem.points}
-              disabled={disabled}
-              onChange={(event) => setProblems(problems.map((item, itemIndex) => itemIndex === index ? { ...item, points: Number(event.target.value) } : item))}
-              placeholder="Problem points"
-            />
-          </div>
-        ))}
+      <div className="grid min-w-0 gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+        <label className="grid min-w-0 gap-2">
+          <span className="text-[10px] uppercase tracking-[0.18em] text-zinc-500">Problem</span>
+          <select
+            value={selectedIndex}
+            disabled={disabled}
+            onChange={(event) => setSelectedProblemIndex(Number(event.target.value))}
+            className="terminal-field clip-arena min-w-0 truncate px-4 py-3 font-[family-name:var(--font-mono)] text-sm"
+          >
+            {problems.map((problem, index) => (
+              <option key={`${problem.code}-${index}`} value={index}>{problem.code || nextProblemCode(index)}</option>
+            ))}
+          </select>
+        </label>
+        <LabeledField label="Problem Points">
+          <Field
+            type="number"
+            min={1}
+            value={selectedProblem?.points ?? 0}
+            disabled={disabled || !selectedProblem}
+            onChange={(event) => setProblems(problems.map((item, itemIndex) => itemIndex === selectedIndex ? { ...item, points: Number(event.target.value) } : item))}
+            placeholder="Problem points"
+          />
+        </LabeledField>
       </div>
     </div>
   );
@@ -571,14 +615,12 @@ function ProblemEditor({
   problems,
   entries,
   setProblems,
-  finalized,
   isPending,
   onSave,
 }: {
   problems: ProblemDraft[];
   entries: ContestEntryView[];
   setProblems: (problems: ProblemDraft[]) => void;
-  finalized: boolean;
   isPending: boolean;
   onSave: () => void;
 }) {
@@ -644,8 +686,8 @@ function ProblemEditor({
           </select>
         </label>
         <div className="flex min-w-0 flex-wrap items-end gap-2 sm:justify-end">
-          <Button type="button" variant="ghost" disabled={finalized || problems.length >= 26} className="w-full sm:w-auto" onClick={addProblem}><Plus className="size-4" /> Add Problem</Button>
-          <Button type="button" variant="ghost" disabled={finalized || problems.length === 1} className="w-full px-3 sm:w-11 sm:px-0" onClick={removeSelectedProblem} aria-label="Delete selected problem"><Trash2 className="size-4" /></Button>
+          <Button type="button" variant="ghost" disabled={problems.length >= 26} className="w-full sm:w-auto" onClick={addProblem}><Plus className="size-4" /> Add Problem</Button>
+          <Button type="button" variant="ghost" disabled={problems.length === 1} className="w-full px-3 sm:w-11 sm:px-0" onClick={removeSelectedProblem} aria-label="Delete selected problem"><Trash2 className="size-4" /></Button>
         </div>
       </div>
 
@@ -654,11 +696,11 @@ function ProblemEditor({
           <div className="grid min-w-0 gap-3 sm:grid-cols-[minmax(0,.8fr)_minmax(0,1fr)]">
             <label className="grid min-w-0 gap-2">
               <span className="text-[10px] uppercase tracking-[0.18em] text-zinc-500">Problem Code</span>
-              <Field placeholder="A" value={selectedProblem.code} disabled={finalized} onChange={(event) => update(selectedIndex, "code", event.target.value)} />
+              <Field placeholder="A" value={selectedProblem.code} onChange={(event) => update(selectedIndex, "code", event.target.value)} />
             </label>
             <label className="grid min-w-0 gap-2">
               <span className="text-[10px] uppercase tracking-[0.18em] text-zinc-500">Problem Points</span>
-              <Field type="number" min={1} placeholder="Points" value={selectedProblem.points} disabled={finalized} onChange={(event) => update(selectedIndex, "points", event.target.value)} />
+              <Field type="number" min={1} placeholder="Points" value={selectedProblem.points} onChange={(event) => update(selectedIndex, "points", event.target.value)} />
             </label>
           </div>
 
@@ -668,7 +710,7 @@ function ProblemEditor({
               <Field
                 list="first-solver-options"
                 placeholder={entries.length ? "Search participant username" : "Add participants first"}
-                disabled={finalized || !entries.length}
+                disabled={!entries.length}
                 value={solverSearch}
                 onChange={(event) => setSolverSearch(event.target.value)}
                 onKeyDown={(event) => {
@@ -683,7 +725,7 @@ function ProblemEditor({
                   .filter((entry) => !selectedProblem.firstSolveUsernames.includes(entry.username))
                   .map((entry) => <option key={entry.username} value={`@${entry.username}`} />)}
               </datalist>
-              <Button type="button" variant="ghost" disabled={finalized || !entries.length} className="w-full sm:w-auto" onClick={() => addFirstSolver(selectedIndex, solverSearch)}>Assign</Button>
+              <Button type="button" variant="ghost" disabled={!entries.length} className="w-full sm:w-auto" onClick={() => addFirstSolver(selectedIndex, solverSearch)}>Assign</Button>
             </div>
           </div>
 
@@ -694,7 +736,6 @@ function ProblemEditor({
                 <button
                   key={username}
                   type="button"
-                  disabled={finalized}
                   title={`Remove @${username}`}
                   onClick={() => removeFirstSolver(selectedIndex, username)}
                   className="clip-arena inline-flex max-w-full min-w-0 items-center overflow-hidden border border-[#9AFF00] bg-[#9AFF00]/15 px-3 py-2 text-xs text-[#9AFF00] disabled:cursor-not-allowed disabled:opacity-70"
@@ -705,7 +746,7 @@ function ProblemEditor({
             </div>
           </div>
 
-          <Button type="button" disabled={isPending || finalized} className="w-full" onClick={onSave}>
+          <Button type="button" disabled={isPending} className="w-full" onClick={onSave}>
             <Save className="size-4" /> Save Problem
           </Button>
         </div>
@@ -714,7 +755,7 @@ function ProblemEditor({
   );
 }
 
-function EntryEditor({ contestId, finalized, entries, submitJson, setMessage, startTransition, refreshContests, isPending }: { contestId: string; finalized: boolean; entries: ContestEntryView[]; submitJson: SubmitJson; setMessage: (message: string) => void; startTransition: (callback: () => void) => void; refreshContests: (id?: string) => Promise<void>; isPending: boolean }) {
+function EntryEditor({ contestId, entries, submitJson, setMessage, startTransition, refreshContests, refreshPlayers, isPending }: { contestId: string; entries: ContestEntryView[]; submitJson: SubmitJson; setMessage: (message: string) => void; startTransition: (callback: () => void) => void; refreshContests: (id?: string) => Promise<void>; refreshPlayers: (username?: string) => Promise<void>; isPending: boolean }) {
   return (
     <div className="mt-4 grid min-w-0 gap-3">
       <form
@@ -727,6 +768,7 @@ function EntryEditor({ contestId, finalized, entries, submitJson, setMessage, st
             try {
               await submitJson(`/api/admin/contests/${contestId}/entries`, { entries: [{ fullName: body.fullName, username: body.username, penalty: body.penalty, solveVector: body.solveVector }] });
               await refreshContests(contestId);
+              await refreshPlayers(String(body.username).toLowerCase());
               form.reset();
               setMessage("Participant added and ledgers recalculated.");
             } catch (error) {
@@ -739,38 +781,18 @@ function EntryEditor({ contestId, finalized, entries, submitJson, setMessage, st
         <Field name="username" placeholder="Username" required />
         <Field name="penalty" type="number" min={0} placeholder="Penalty" required />
         <Field name="solveVector" placeholder="Solve vector: [1,1,0,1]" required />
-        <Button type="submit" disabled={isPending || finalized}><Plus className="size-4" /> Add Participant</Button>
+        <Button type="submit" disabled={isPending}><Plus className="size-4" /> Add Participant</Button>
       </form>
-      <div className="standings-table-wrap">
+      <div className="standings-list">
         {entries.length ? (
-          <table className="standings-edit-table">
-            <thead>
-              <tr>
-                <th>Rank</th>
-                <th>Full Name</th>
-                <th>Username</th>
-                <th>Solve Vector</th>
-                <th>Solved</th>
-                <th>Solved Problems</th>
-                <th>Penalty</th>
-                <th>Raw Score</th>
-                <th>Contest Score</th>
-                <th>Prize Bonus</th>
-                <th>Final Score</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {entries.map((entry) => <EntryRow key={entry.id} contestId={contestId} finalized={finalized} entry={entry} submitJson={submitJson} setMessage={setMessage} startTransition={startTransition} refreshContests={refreshContests} isPending={isPending} />)}
-            </tbody>
-          </table>
+          entries.map((entry) => <EntryRow key={entry.id} contestId={contestId} entry={entry} submitJson={submitJson} setMessage={setMessage} startTransition={startTransition} refreshContests={refreshContests} refreshPlayers={refreshPlayers} isPending={isPending} />)
         ) : <Empty>No standings rows yet.</Empty>}
       </div>
     </div>
   );
 }
 
-function EntryRow({ contestId, finalized, entry, submitJson, setMessage, startTransition, refreshContests, isPending }: { contestId: string; finalized: boolean; entry: ContestEntryView; submitJson: SubmitJson; setMessage: (message: string) => void; startTransition: (callback: () => void) => void; refreshContests: (id?: string) => Promise<void>; isPending: boolean }) {
+function EntryRow({ contestId, entry, submitJson, setMessage, startTransition, refreshContests, refreshPlayers, isPending }: { contestId: string; entry: ContestEntryView; submitJson: SubmitJson; setMessage: (message: string) => void; startTransition: (callback: () => void) => void; refreshContests: (id?: string) => Promise<void>; refreshPlayers: (username?: string) => Promise<void>; isPending: boolean }) {
   const [fullName, setFullName] = useState(entry.fullName);
   const [username, setUsername] = useState(entry.username);
   const [solveVector, setSolveVector] = useState(JSON.stringify(entry.solveVector));
@@ -781,6 +803,7 @@ function EntryRow({ contestId, finalized, entry, submitJson, setMessage, startTr
       try {
         await submitJson(`/api/admin/contests/${contestId}/entries`, { standingId: entry.id, fullName, username, solveVector, penalty }, "PATCH");
         await refreshContests(contestId);
+        await refreshPlayers(username.toLowerCase());
         setMessage("Participant updated. Ranks and scores recalculated.");
       } catch (error) {
         setMessage(error instanceof Error ? error.message : "Unable to update participant.");
@@ -789,33 +812,102 @@ function EntryRow({ contestId, finalized, entry, submitJson, setMessage, startTr
   }
 
   return (
-    <tr>
-      <td className="font-[family-name:var(--font-display)] text-[#9AFF00]">#{entry.rank}</td>
-      <td><Field value={fullName} disabled={finalized} onChange={(event) => setFullName(event.target.value)} /></td>
-      <td><Field value={username} disabled={finalized} onChange={(event) => setUsername(event.target.value)} /></td>
-      <td><Field value={solveVector} disabled={finalized} onChange={(event) => setSolveVector(event.target.value)} /></td>
-      <td>{entry.solved}</td>
-      <td>{entry.solvedProblems.join(", ") || "None"}</td>
-      <td><Field type="number" min={0} value={penalty} disabled={finalized} onChange={(event) => setPenalty(event.target.value)} /></td>
-      <td>{entry.rawScore}</td>
-      <td>{entry.contestScore}</td>
-      <td className="text-[#F3C55B]">+{entry.bonusPoints}</td>
-      <td className="font-[family-name:var(--font-display)] text-[#9AFF00]">{entry.finalScore}</td>
-      <td>
-        <div className="flex gap-2">
-          <Button type="button" disabled={isPending || finalized} className="w-11 px-0" onClick={saveRow}><FilePenLine className="size-4" /></Button>
-          <Button type="button" className="w-11 px-0" variant="ghost" onClick={() => startTransition(async () => {
+    <div className="standings-entry-card">
+      <div className="standings-rank-badge">#{entry.rank}</div>
+      <LabeledField label="Full Name"><Field value={fullName} onChange={(event) => setFullName(event.target.value)} /></LabeledField>
+      <LabeledField label="Username"><Field value={username} onChange={(event) => setUsername(event.target.value)} /></LabeledField>
+      <LabeledField label="Solve Vector"><Field value={solveVector} onChange={(event) => setSolveVector(event.target.value)} /></LabeledField>
+      <MetricChip label="Solved" value={entry.solved} />
+      <MetricChip label="Solved Problems" value={entry.solvedProblems.join(", ") || "None"} />
+      <LabeledField label="Penalty"><Field type="number" min={0} value={penalty} onChange={(event) => setPenalty(event.target.value)} /></LabeledField>
+      <MetricChip label="Raw Score" value={entry.rawScore} />
+      <MetricChip label="Contest Score" value={entry.contestScore} />
+      <MetricChip label="Prize Bonus" value={`+${entry.bonusPoints}`} accent />
+      <MetricChip label="Final Score" value={entry.finalScore} strong />
+      <div className="flex min-w-0 flex-wrap gap-2">
+        <Button type="button" disabled={isPending} className="w-full sm:w-auto" onClick={saveRow}><FilePenLine className="size-4" /> Save</Button>
+        <Button type="button" className="w-full sm:w-auto" variant="ghost" onClick={() => startTransition(async () => {
           try {
             await submitJson(`/api/admin/contests/${contestId}/entries`, { standingId: entry.id }, "DELETE");
             await refreshContests(contestId);
+            await refreshPlayers();
             setMessage("Participant deleted. Ranks and scores recalculated.");
           } catch (error) {
             setMessage(error instanceof Error ? error.message : "Unable to delete participant.");
           }
-          })} disabled={isPending || finalized}><Trash2 className="size-4" /></Button>
-        </div>
-      </td>
-    </tr>
+          })} disabled={isPending}><Trash2 className="size-4" /> Delete</Button>
+      </div>
+    </div>
+  );
+}
+
+function PlayerEditor({ players, selectedPlayer, setSelectedPlayer, submitJson, setMessage, startTransition, refreshPlayers, refreshContests, isPending }: { players: PlayerAdminView[]; selectedPlayer: string; setSelectedPlayer: (username: string) => void; submitJson: SubmitJson; setMessage: (message: string) => void; startTransition: (callback: () => void) => void; refreshPlayers: (username?: string) => Promise<void>; refreshContests: (id?: string) => Promise<void>; isPending: boolean }) {
+  const player = players.find((item) => item.username === selectedPlayer) ?? players[0];
+
+  if (!player) return <div className="mt-4"><Empty>No players recorded yet.</Empty></div>;
+
+  return (
+    <form
+      key={player.username}
+      className="player-editor-form"
+      onSubmit={(event) => {
+        event.preventDefault();
+        const body = Object.fromEntries(new FormData(event.currentTarget).entries());
+        startTransition(async () => {
+          try {
+            const payload = await submitJson<PlayerMutationResponse>(`/api/admin/players/${encodeURIComponent(player.username)}`, body, "PATCH");
+            await refreshPlayers(payload.player.username);
+            await refreshContests();
+            setMessage("Player profile updated. Public profile and standings now use the corrected data.");
+          } catch (error) {
+            setMessage(error instanceof Error ? error.message : "Unable to update player.");
+          }
+        });
+      }}
+    >
+      <label className="grid min-w-0 gap-2 md:col-span-2">
+        <span className="text-[10px] uppercase tracking-[0.18em] text-zinc-500">Player</span>
+        <select value={player.username} onChange={(event) => setSelectedPlayer(event.target.value)} className="terminal-field clip-arena min-w-0 truncate px-4 py-3 font-[family-name:var(--font-mono)] text-sm">
+          {players.map((item) => (
+            <option key={item.id} value={item.username}>{item.fullName} (@{item.username})</option>
+          ))}
+        </select>
+      </label>
+      <LabeledField label="Full Name"><Field name="fullName" defaultValue={player.fullName} required /></LabeledField>
+      <LabeledField label="Username"><Field name="username" defaultValue={player.username} required /></LabeledField>
+      <label className="grid min-w-0 gap-2">
+        <span className="text-[10px] uppercase tracking-[0.18em] text-zinc-500">Year</span>
+        <select name="year" defaultValue={player.year} className="terminal-field clip-arena min-w-0 truncate px-4 py-3 font-[family-name:var(--font-mono)] text-sm">
+          {[1, 2, 3, 4, 5, 6, 7, 8].map((year) => <option key={year} value={year}>{yearLabelText(year)}</option>)}
+        </select>
+      </label>
+      <LabeledField label="Email"><Field name="email" type="email" defaultValue={player.email ?? ""} placeholder="Optional email" /></LabeledField>
+      <LabeledField label="Branch / Course"><Field name="branchCourse" defaultValue={player.branchCourse ?? ""} placeholder="Optional branch or course" /></LabeledField>
+      <LabeledField label="Avatar URL"><Field name="avatar" defaultValue={player.avatar ?? ""} placeholder="Optional profile image URL" /></LabeledField>
+      <label className="grid min-w-0 gap-2 md:col-span-2">
+        <span className="text-[10px] uppercase tracking-[0.18em] text-zinc-500">Bio</span>
+        <textarea name="bio" defaultValue={player.bio ?? ""} rows={3} className="terminal-field clip-arena min-w-0 resize-y overflow-hidden px-4 py-3 font-[family-name:var(--font-mono)] text-sm" />
+      </label>
+      <Button type="submit" disabled={isPending} className="md:col-span-2"><Save className="size-4" /> Save Player</Button>
+    </form>
+  );
+}
+
+function LabeledField({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <label className="grid min-w-0 gap-2">
+      <span className="text-[10px] uppercase tracking-[0.18em] text-zinc-500">{label}</span>
+      {children}
+    </label>
+  );
+}
+
+function MetricChip({ label, value, accent = false, strong = false }: { label: string; value: ReactNode; accent?: boolean; strong?: boolean }) {
+  return (
+    <div className="metric-chip">
+      <span>{label}</span>
+      <strong className={cn(accent && "text-[#F3C55B]", strong && "text-[#9AFF00]")}>{value}</strong>
+    </div>
   );
 }
 
@@ -881,7 +973,7 @@ function finalizeStandings(id: string, problems: ProblemDraft[], submitJson: Sub
         }));
       const response = await submitJson<FinalizeStandingsResponse>(`/api/admin/contests/${id}/entries`, { action: "finalize", problems: payloadProblems }, "PATCH");
       await refreshContests(id);
-      setMessage(response.finalized ? `Finalized ${response.rows ?? 0} standings rows and rebuilt all ledgers.` : "Standings were already finalized. Ledgers are protected.");
+      setMessage(response.finalized ? `Finalized ${response.rows ?? 0} standings rows and rebuilt all ledgers.` : "Finalized standings were recalculated.");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Finalization failed.");
     }
@@ -955,6 +1047,10 @@ function recalculateContest(id: string | undefined, submitJson: SubmitJson, setM
 
 function nextProblemCode(index: number) {
   return String.fromCharCode("A".charCodeAt(0) + index);
+}
+
+function yearLabelText(year: number) {
+  return `${year}${year === 1 ? "st" : year === 2 ? "nd" : year === 3 ? "rd" : "th"} Year`;
 }
 
 function setProblemCount(count: number, problems: ProblemDraft[], setProblems: (problems: ProblemDraft[]) => void) {

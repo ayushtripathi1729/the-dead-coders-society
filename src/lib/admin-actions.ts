@@ -25,6 +25,16 @@ const problemSchema = z.object({
   firstSolveUsernames: z.array(z.string().min(1).max(48)).default([]),
 });
 
+const playerInputSchema = z.object({
+  fullName: z.string().trim().min(1).max(120),
+  username: z.string().trim().min(1).max(48).regex(/^[a-zA-Z0-9_.+-]+$/),
+  year: z.coerce.number().int().min(1).max(8),
+  email: z.string().trim().email().optional().or(z.literal("")).nullable(),
+  branchCourse: z.string().trim().max(120).optional().or(z.literal("")).nullable(),
+  avatar: httpUrlSchema.optional().or(z.literal("")).nullable(),
+  bio: z.string().trim().max(1000).optional().or(z.literal("")).nullable(),
+});
+
 export const contestInputSchema = z.object({
   title: z.string().min(2).max(140),
   slug: z.string().optional(),
@@ -184,8 +194,8 @@ export async function createOrUpdateContest(input: unknown, id?: string, adminId
       });
     }
     if (problems) {
-      if (id) await ensureContestMutable(saved.id, tx);
       await saveContestProblems(saved.id, problems, tx);
+      if (id) await refreshAllDerived(tx);
     }
     return saved;
   });
@@ -220,7 +230,6 @@ async function uniqueContestSlug(baseSlug: string) {
 export async function upsertContestEntries(contestId: string, rawEntries: unknown[], adminId?: string, { allowExisting = false } = {}) {
   const entries = rawEntries.map((entry) => entryInputSchema.parse(entry));
   const saved = await prisma.$transaction(async (tx) => {
-    await ensureContestMutable(contestId, tx);
     const existing = await tx.contestStanding.findMany({ where: { contestId }, include: { player: true } });
     const merged = new Map<string, EntryInput>(existing.map((row) => [row.player.username.toLowerCase(), { username: row.player.username, fullName: row.player.fullName, solveVector: row.solveVector, penalty: row.penalty, notes: row.notes }]));
     const incoming = new Set<string>();
@@ -232,7 +241,9 @@ export async function upsertContestEntries(contestId: string, rawEntries: unknow
       incoming.add(key);
       merged.set(key, entry);
     }
-    return replaceContestStandings(contestId, [...merged.values()], tx);
+    const rows = await replaceContestStandings(contestId, [...merged.values()], tx);
+    await refreshAllDerived(tx);
+    return rows;
   }, { maxWait: 10_000, timeout: 30_000 });
 
   await logActivity(adminId, entries.length === 1 ? "participant.added" : "standings.draft.upsert", "ContestStanding", contestId, { rows: saved.length });
@@ -242,19 +253,18 @@ export async function upsertContestEntries(contestId: string, rawEntries: unknow
 export async function updateContestEntry(contestId: string, standingId: string, input: unknown, adminId?: string) {
   const entry = entryInputSchema.parse(input);
   await prisma.$transaction(async (tx) => {
-    await ensureContestMutable(contestId, tx);
     const standing = await tx.contestStanding.findUniqueOrThrow({ where: { id: standingId }, include: { player: true } });
     if (standing.contestId !== contestId) throw new Error("Standing row not found.");
     const rows = await tx.contestStanding.findMany({ where: { contestId }, include: { player: true } });
     const next = rows.map((row) => row.id === standingId ? entry : { username: row.player.username, fullName: row.player.fullName, solveVector: row.solveVector, penalty: row.penalty, notes: row.notes });
     await replaceContestStandings(contestId, next, tx);
+    await refreshAllDerived(tx);
   }, { maxWait: 10_000, timeout: 30_000 });
   await logActivity(adminId, "participant.edited", "ContestStanding", standingId, { contestId });
 }
 
 export async function deleteContestEntry(contestId: string, standingId: string, adminId?: string) {
   await prisma.$transaction(async (tx) => {
-    await ensureContestMutable(contestId, tx);
     const standing = await tx.contestStanding.findUniqueOrThrow({ where: { id: standingId } });
     if (standing.contestId !== contestId) throw new Error("Standing row not found.");
     await tx.firstSolve.deleteMany({ where: { playerUsername: standing.playerUsername, problem: { contestId } } });
@@ -262,6 +272,7 @@ export async function deleteContestEntry(contestId: string, standingId: string, 
     await tx.contestParticipation.deleteMany({ where: { contestId, playerUsername: standing.playerUsername } });
     const rows = await tx.contestStanding.findMany({ where: { contestId }, include: { player: true } });
     await replaceContestStandings(contestId, rows.map((row) => ({ username: row.player.username, fullName: row.player.fullName, solveVector: row.solveVector, penalty: row.penalty, notes: row.notes })), tx);
+    await refreshAllDerived(tx);
   }, { maxWait: 10_000, timeout: 30_000 });
   await logActivity(adminId, "participant.deleted", "ContestStanding", standingId, { contestId });
 }
@@ -269,7 +280,6 @@ export async function deleteContestEntry(contestId: string, standingId: string, 
 export async function saveContestProblemDraft(contestId: string, rawProblems: unknown[] = [], adminId?: string) {
   const problems = parseProblems(rawProblems);
   await prisma.$transaction(async (tx) => {
-    await ensureContestMutable(contestId, tx);
     const previousProblems = await tx.contestProblem.findMany({
       where: { contestId },
       include: { firstSolves: true },
@@ -327,6 +337,7 @@ export async function saveContestProblemDraft(contestId: string, rawProblems: un
         metadata: { problems: problems.length },
       },
     });
+    await refreshAllDerived(tx);
   }, { maxWait: 10_000, timeout: 30_000 });
 }
 
@@ -334,7 +345,10 @@ export async function finalizeContestStandings(contestId: string, rawProblems: u
   const problems = parseProblems(rawProblems);
   const result = await prisma.$transaction(async (tx) => {
     const contest = await tx.contest.findUniqueOrThrow({ where: { id: contestId }, select: { standingsFinalizedAt: true } });
-    if (contest.standingsFinalizedAt) return { finalized: false, rows: await tx.contestStanding.count({ where: { contestId } }) };
+    if (contest.standingsFinalizedAt) {
+      await refreshAllDerived(tx);
+      return { finalized: false, rows: await tx.contestStanding.count({ where: { contestId } }) };
+    }
     const standings = await tx.contestStanding.findMany({ where: { contestId } });
     if (!standings.length) throw new Error("Add at least one participant before finalizing standings.");
     await saveContestProblems(contestId, problems, tx);
@@ -358,21 +372,12 @@ export async function finalizeContestStandings(contestId: string, rawProblems: u
 
 export async function recalculateContest(contestId: string, adminId?: string) {
   await prisma.$transaction(async (tx) => {
-    const contest = await tx.contest.findUniqueOrThrow({ where: { id: contestId }, select: { standingsFinalizedAt: true } });
-    if (contest.standingsFinalizedAt) {
-      await refreshAllDerived(tx);
-      return;
-    }
+    await tx.contest.findUniqueOrThrow({ where: { id: contestId }, select: { id: true } });
     const rows = await tx.contestStanding.findMany({ where: { contestId }, include: { player: true } });
     await replaceContestStandings(contestId, rows.map((row) => ({ username: row.player.username, fullName: row.player.fullName, solveVector: row.solveVector, penalty: row.penalty, notes: row.notes })), tx);
     await refreshAllDerived(tx);
   }, { maxWait: 10_000, timeout: 30_000 });
   await logActivity(adminId, "standings.recalculate", "Contest", contestId);
-}
-
-async function ensureContestMutable(contestId: string, db: DbClient) {
-  const contest = await db.contest.findUniqueOrThrow({ where: { id: contestId }, select: { standingsFinalizedAt: true } });
-  if (contest.standingsFinalizedAt) throw new Error("Standings are finalized. Create a new contest revision to change results.");
 }
 
 async function replaceContestStandings(contestId: string, entries: EntryInput[], db: DbClient) {
@@ -459,6 +464,45 @@ async function replaceContestStandings(contestId: string, entries: EntryInput[],
   await db.contestStanding.deleteMany({ where: { contestId, playerUsername: savedUsernames.length ? { notIn: savedUsernames } : undefined } });
   await syncFirstSolveCounts(contestId, db);
   return db.contestStanding.findMany({ where: { contestId }, orderBy: { rank: "asc" } });
+}
+
+export async function updatePlayerProfile(username: string, input: unknown, adminId?: string) {
+  const data = playerInputSchema.parse(input);
+  const current = await prisma.player.findUniqueOrThrow({ where: { username } });
+  const nextUsername = data.username.toLowerCase();
+  const usernameOwner = await prisma.player.findFirst({
+    where: { username: { equals: nextUsername, mode: "insensitive" }, NOT: { id: current.id } },
+    select: { id: true },
+  });
+  if (usernameOwner) throw new Error("Username already belongs to another player.");
+  if (data.email) {
+    const emailOwner = await prisma.player.findFirst({
+      where: { email: { equals: data.email, mode: "insensitive" }, NOT: { id: current.id } },
+      select: { id: true },
+    });
+    if (emailOwner) throw new Error("Email already belongs to another player.");
+  }
+
+  const player = await prisma.$transaction(async (tx) => {
+    const saved = await tx.player.update({
+      where: { id: current.id },
+      data: {
+        fullName: data.fullName,
+        username: nextUsername,
+        year: data.year,
+        email: optionalString(data.email),
+        branchCourse: optionalString(data.branchCourse),
+        avatar: optionalString(data.avatar),
+        bio: optionalString(data.bio),
+      },
+      select: { id: true, fullName: true, username: true, year: true, email: true, branchCourse: true, avatar: true, bio: true },
+    });
+    await refreshAllDerived(tx);
+    return saved;
+  }, { maxWait: 10_000, timeout: 60_000 });
+
+  await logActivity(adminId, "player.update", "Player", player.username, { previousUsername: current.username });
+  return player;
 }
 
 async function saveContestProblems(contestId: string, problems: z.infer<typeof problemSchema>[], db: DbClient) {

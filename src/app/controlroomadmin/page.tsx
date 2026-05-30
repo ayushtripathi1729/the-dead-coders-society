@@ -21,6 +21,12 @@ export default async function ControlRoomAdminPage({ searchParams }: { searchPar
         select: { id: true, action: true, entity: true, entityId: true, createdAt: true },
       })
     : [];
+  const players = isAuthed
+    ? await prisma.player.findMany({
+        orderBy: [{ fullName: "asc" }, { username: "asc" }],
+        select: { id: true, fullName: true, username: true, year: true, email: true, branchCourse: true, avatar: true, bio: true },
+      })
+    : [];
 
   return (
     <>
@@ -63,7 +69,11 @@ export default async function ControlRoomAdminPage({ searchParams }: { searchPar
             <form action={adminSignOut} className="mb-5 flex justify-end">
               <Button type="submit" variant="ghost"><ShieldCheck className="size-4" /> Secure Sign Out</Button>
             </form>
-            <AdminWorkbench contests={contests} activityLogs={activityLogs.map((log) => ({ ...log, createdAt: log.createdAt.toISOString() }))} />
+            <AdminWorkbench
+              contests={contests}
+              activityLogs={activityLogs.map((log) => ({ ...log, createdAt: log.createdAt.toISOString() }))}
+              players={players}
+            />
           </>
         )}
       </main>

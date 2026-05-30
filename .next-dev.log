@@ -36,3 +36,44 @@
  ✓ Compiled in 456ms (695 modules)
  GET /controlroomadmin 200 in 1679ms
  ✓ Compiled in 496ms (695 modules)
+prisma:error Error in PostgreSQL connection: Error { kind: Db, cause: Some(DbError { severity: "FATAL", parsed_severity: Some(Fatal), code: SqlState(E57P01), message: "terminating connection due to administrator command", detail: None, hint: None, position: None, where_: None, schema: None, table: None, column: None, datatype: None, constraint: None, file: Some("postgres.c"), line: Some(3319), routine: Some("ProcessInterrupts") }) }
+ ✓ Compiled in 2.4s (695 modules)
+ ✓ Compiled in 617ms (695 modules)
+ ✓ Compiled in 499ms (695 modules)
+ ✓ Compiled in 440ms (695 modules)
+ ✓ Compiled in 433ms (695 modules)
+ ✓ Compiled in 2.4s (1905 modules)
+ ✓ Compiled in 5.8s (1978 modules)
+ ✓ Compiled in 1553ms (1978 modules)
+ ✓ Compiled in 1071ms (1978 modules)
+ ✓ Compiled in 925ms (1978 modules)
+ ✓ Compiled in 3s (1978 modules)
+ ✓ Compiled in 4.6s (1905 modules)
+ ✓ Compiled in 354ms (695 modules)
+ ✓ Compiled in 1017ms (695 modules)
+ ✓ Compiled in 1725ms (1905 modules)
+ ✓ Compiled in 1096ms (1728 modules)
+ ✓ Compiled in 1245ms (1728 modules)
+ ✓ Compiled in 292ms (695 modules)
+ ✓ Compiled in 737ms (1891 modules)
+ ✓ Compiled in 858ms (1728 modules)
+ ✓ Compiled in 919ms (1728 modules)
+ ✓ Compiled in 1564ms (1730 modules)
+ ✓ Compiled in 886ms (1730 modules)
+ ✓ Compiled in 1130ms (1730 modules)
+ ✓ Compiled in 888ms (1730 modules)
+ ✓ Compiled in 2.5s (1730 modules)
+ ✓ Compiled in 448ms (696 modules)
+ ✓ Compiled in 387ms (696 modules)
+ ✓ Compiled in 1139ms (1730 modules)
+ ✓ Compiled in 889ms (1730 modules)
+ ✓ Compiled in 793ms (1730 modules)
+ GET /controlroomadmin 200 in 1090ms
+ GET /controlroomadmin 200 in 154ms
+ GET /controlroomadmin 200 in 231ms
+ GET /controlroomadmin 200 in 195ms
+ GET /controlroomadmin 200 in 207ms
+ GET /controlroomadmin 200 in 166ms
+ GET /controlroomadmin 200 in 198ms
+ GET /controlroomadmin 200 in 209ms
+ GET /controlroomadmin 200 in 248ms
