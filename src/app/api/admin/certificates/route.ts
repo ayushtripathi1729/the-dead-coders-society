@@ -43,7 +43,7 @@ export async function POST(request: NextRequest) {
 
     await prisma.activityLog.create({
       data: {
-        adminId: admin.id,
+        admin: { connect: { id: admin.id } },
         action: "certificate.generate",
         entity: "Certificate",
         entityId: certificate.id,

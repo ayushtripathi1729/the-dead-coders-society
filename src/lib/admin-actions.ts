@@ -288,7 +288,7 @@ export async function saveContestProblemDraft(contestId: string, rawProblems: un
     if (added) {
       await tx.activityLog.create({
         data: {
-          adminId,
+          admin: adminId ? { connect: { id: adminId } } : undefined,
           action: "problem.added",
           entity: "ContestProblem",
           entityId: contestId,
@@ -299,7 +299,7 @@ export async function saveContestProblemDraft(contestId: string, rawProblems: un
     if (edited) {
       await tx.activityLog.create({
         data: {
-          adminId,
+          admin: adminId ? { connect: { id: adminId } } : undefined,
           action: "problem.edited",
           entity: "ContestProblem",
           entityId: contestId,
@@ -310,7 +310,7 @@ export async function saveContestProblemDraft(contestId: string, rawProblems: un
     if (deleted) {
       await tx.activityLog.create({
         data: {
-          adminId,
+          admin: adminId ? { connect: { id: adminId } } : undefined,
           action: "problem.deleted",
           entity: "ContestProblem",
           entityId: contestId,
@@ -320,7 +320,7 @@ export async function saveContestProblemDraft(contestId: string, rawProblems: un
     }
     await tx.activityLog.create({
       data: {
-        adminId,
+        admin: adminId ? { connect: { id: adminId } } : undefined,
         action: "first-solves.updated",
         entity: "ContestProblem",
         entityId: contestId,
@@ -342,7 +342,7 @@ export async function finalizeContestStandings(contestId: string, rawProblems: u
     await refreshAllDerived(tx);
     await tx.activityLog.create({
       data: {
-        adminId,
+        admin: adminId ? { connect: { id: adminId } } : undefined,
         action: "standings.finalize",
         entity: "Contest",
         entityId: contestId,
@@ -403,8 +403,8 @@ async function replaceContestStandings(contestId: string, entries: EntryInput[],
         penalty: entry.penalty,
       },
       create: {
-        contestId,
-        playerUsername: player.username,
+        contest: { connect: { id: contestId } },
+        player: { connect: { username: player.username } },
         finalRank: entry.rank,
         finalScore: entry.finalScore,
         solved: entry.solved,
@@ -431,8 +431,8 @@ async function replaceContestStandings(contestId: string, entries: EntryInput[],
         notes: entry.notes || undefined,
       },
       create: {
-        contestId,
-        playerUsername: player.username,
+        contest: { connect: { id: contestId } },
+        player: { connect: { username: player.username } },
         rank: entry.rank,
         solved: entry.solved,
         solveVector: entry.solveVector,
@@ -469,7 +469,7 @@ async function saveContestProblems(contestId: string, problems: z.infer<typeof p
   for (const [index, problem] of problems.entries()) {
     const contestProblem = await db.contestProblem.create({
       data: {
-        contestId,
+        contest: { connect: { id: contestId } },
         code: problem.code.trim().toUpperCase(),
         title: optionalString(problem.title),
         points: problem.points,
@@ -483,8 +483,8 @@ async function saveContestProblems(contestId: string, problems: z.infer<typeof p
       if (!player) throw new Error(`First solve user "${username}" is not in this contest's standings.`);
       await db.firstSolve.create({
         data: {
-          playerUsername: player.username,
-          problemId: contestProblem.id,
+          player: { connect: { username: player.username } },
+          problem: { connect: { id: contestProblem.id } },
         },
       });
     }
@@ -550,7 +550,15 @@ async function recomputeRatings(db: DbClient = prisma) {
       const next = Math.max(100, current + delta);
       ratings.set(standing.playerUsername, next);
       peaks.set(standing.playerUsername, Math.max(peaks.get(standing.playerUsername) ?? 1200, next));
-      await db.ratingHistory.create({ data: { playerUsername: standing.playerUsername, contestId: contest.id, rating: next, delta, reason: "TDCS standings finalization" } });
+      await db.ratingHistory.create({
+        data: {
+          player: { connect: { username: standing.playerUsername } },
+          contest: { connect: { id: contest.id } },
+          rating: next,
+          delta,
+          reason: "TDCS standings finalization",
+        },
+      });
       await db.contestParticipation.updateMany({ where: { contestId: contest.id, playerUsername: standing.playerUsername }, data: { ratingDelta: delta } });
     }
   }
@@ -585,7 +593,20 @@ async function rebuildMonthlyLeaderboard(year: number, month: number, db: DbClie
   await db.monthlyLeaderboard.deleteMany({ where: { year, month } });
   if (isCurrentMonth) await db.player.updateMany({ data: { monthlyRank: null } });
   for (const row of rows) {
-    await db.monthlyLeaderboard.create({ data: { playerUsername: row.playerUsername, year, month, rank: row.rank, totalScore: row.totalScore, contests: row.contests, wins: row.wins, solved: row.solved, firstSolves: row.firstSolves, averageRank: row.averageRank } });
+    await db.monthlyLeaderboard.create({
+      data: {
+        player: { connect: { username: row.playerUsername } },
+        year,
+        month,
+        rank: row.rank,
+        totalScore: row.totalScore,
+        contests: row.contests,
+        wins: row.wins,
+        solved: row.solved,
+        firstSolves: row.firstSolves,
+        averageRank: row.averageRank,
+      },
+    });
     if (isCurrentMonth) await db.player.update({ where: { username: row.playerUsername }, data: { monthlyRank: row.rank } });
   }
 }
@@ -598,7 +619,19 @@ async function rebuildYearlyLeaderboard(year: number, db: DbClient = prisma) {
   await db.yearlyLeaderboard.deleteMany({ where: { year } });
   if (isCurrentYear) await db.player.updateMany({ data: { yearlyRank: null } });
   for (const row of rows) {
-    await db.yearlyLeaderboard.create({ data: { playerUsername: row.playerUsername, year, rank: row.rank, totalScore: row.totalScore, contests: row.contests, wins: row.wins, solved: row.solved, firstSolves: row.firstSolves, averageRank: row.averageRank } });
+    await db.yearlyLeaderboard.create({
+      data: {
+        player: { connect: { username: row.playerUsername } },
+        year,
+        rank: row.rank,
+        totalScore: row.totalScore,
+        contests: row.contests,
+        wins: row.wins,
+        solved: row.solved,
+        firstSolves: row.firstSolves,
+        averageRank: row.averageRank,
+      },
+    });
     if (isCurrentYear) await db.player.update({ where: { username: row.playerUsername }, data: { yearlyRank: row.rank } });
   }
 }
@@ -635,8 +668,8 @@ async function rebuildHallOfFame(contestId: string, db: DbClient = prisma) {
       update: { score: standing.finalScore },
       create: {
         id: `${contestId}:${standing.playerUsername}`,
-        playerUsername: standing.playerUsername,
-        contestId,
+        player: { connect: { username: standing.playerUsername } },
+        contest: { connect: { id: contestId } },
         title: `${isWinner ? "Champion" : `Rank #${standing.rank}`} of ${standing.contest.title}`,
         score: standing.finalScore,
         badges: JSON.stringify([isWinner ? "Champion" : "Top 5", `Rank #${standing.rank}`]),
@@ -657,7 +690,7 @@ async function rebuildAchievements(db: DbClient = prisma) {
     if (player.monthlyRank === 1) titles.add("Monthly Champion");
     if (player.yearlyRank === 1) titles.add("Yearly Champion");
     for (const title of titles) {
-      await db.achievement.create({ data: { playerUsername: player.username, title } });
+      await db.achievement.create({ data: { player: { connect: { username: player.username } }, title } });
     }
   }
 }
@@ -690,5 +723,5 @@ export function parseStandingsText(text: string): EntryInput[] {
 }
 
 export async function logActivity(adminId: string | undefined, action: string, entity: string, entityId?: string, metadata?: Prisma.InputJsonValue) {
-  await prisma.activityLog.create({ data: { adminId, action, entity, entityId, metadata } });
+  await prisma.activityLog.create({ data: { admin: adminId ? { connect: { id: adminId } } : undefined, action, entity, entityId, metadata } });
 }

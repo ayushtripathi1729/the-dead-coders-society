@@ -88,8 +88,8 @@ export async function POST(request: NextRequest) {
               kind: parsed.kind,
               url: uploaded.url,
               publicId: uploaded.publicId,
-              contestId: parsed.contestId,
-              playerUsername: parsed.playerUsername,
+              contest: { connect: { id: parsed.contestId } },
+              player: parsed.playerUsername ? { connect: { username: parsed.playerUsername } } : undefined,
             },
           });
           const replaced = previousUrl
@@ -103,7 +103,7 @@ export async function POST(request: NextRequest) {
           }
           await tx.activityLog.create({
             data: {
-              adminId: admin.id,
+              admin: { connect: { id: admin.id } },
               action: "upload.created",
               entity: "UploadAsset",
               entityId: uploadRecord.id,
@@ -125,13 +125,13 @@ export async function POST(request: NextRequest) {
             kind: parsed.kind,
             url: uploaded.url,
             publicId: uploaded.publicId,
-            contestId: parsed.contestId,
-            playerUsername: parsed.playerUsername,
+            contest: parsed.contestId ? { connect: { id: parsed.contestId } } : undefined,
+            player: parsed.playerUsername ? { connect: { username: parsed.playerUsername } } : undefined,
           },
         });
         await prisma.activityLog.create({
           data: {
-            adminId: admin.id,
+            admin: { connect: { id: admin.id } },
             action: "upload.created",
             entity: "UploadAsset",
             entityId: record.id,
@@ -185,7 +185,7 @@ export async function PATCH(request: NextRequest) {
       }
       await tx.activityLog.create({
         data: {
-          adminId: admin.id,
+          admin: { connect: { id: admin.id } },
           action: "upload.removed",
           entity: "Contest",
           entityId: parsed.contestId,
