@@ -12,6 +12,10 @@ const uploadSchema = z.object({
 
 const allowedImageTypes = new Set(["image/jpeg", "image/png", "image/webp"]);
 
+function isString(value: string | null): value is string {
+  return typeof value === "string";
+}
+
 function folderForKind(kind: z.infer<typeof uploadSchema>["kind"]): CloudinaryUploadFolder {
   if (kind === "BANNER") return "contests/banners";
   if (kind === "POSTER" || kind === "INVITE_POSTER") return "contests/posters";
@@ -110,7 +114,7 @@ export async function POST(request: NextRequest) {
               metadata: { kind: parsed.kind, contestId: parsed.contestId ?? null, playerUsername: parsed.playerUsername ?? null },
             },
           });
-          return { uploadRecord, replacedPublicIds: replaced.map((asset) => asset.publicId).filter(Boolean) as string[] };
+          return { uploadRecord, replacedPublicIds: replaced.map((asset) => asset.publicId).filter(isString) };
         });
         record = result.uploadRecord;
         replacedPublicIds = result.replacedPublicIds;
@@ -192,7 +196,7 @@ export async function PATCH(request: NextRequest) {
           metadata: { kind: parsed.kind },
         },
       });
-      return assets.map((asset) => asset.publicId).filter(Boolean) as string[];
+      return assets.map((asset) => asset.publicId).filter(isString);
     });
     await Promise.all(publicIds.map((publicId) => deleteFromCloudinary(publicId).catch(() => undefined)));
 

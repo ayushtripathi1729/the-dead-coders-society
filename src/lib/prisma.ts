@@ -2,8 +2,6 @@ import "server-only";
 
 import { PrismaClient } from "@prisma/client";
 
-const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
-
 const retryablePrismaCodes = new Set(["P1001", "P1002", "P1008", "P1017", "P2024"]);
 
 function sleep(ms: number) {
@@ -25,9 +23,8 @@ async function withRetry<T>(operation: () => Promise<T>, attempts = 3): Promise<
   throw lastError;
 }
 
-export const prisma =
-  globalForPrisma.prisma ??
-  new PrismaClient({
+function createPrismaClient(): PrismaClient {
+  return new PrismaClient({
     log: process.env.NODE_ENV === "development" ? ["error", "warn"] : ["error"],
     transactionOptions: {
       maxWait: 10_000,
@@ -42,6 +39,11 @@ export const prisma =
       },
     },
   }) as unknown as PrismaClient;
+}
+
+const globalForPrisma = globalThis as typeof globalThis & { prisma?: PrismaClient };
+
+export const prisma = globalForPrisma.prisma ?? createPrismaClient();
 
 if (process.env.NODE_ENV !== "production") {
   globalForPrisma.prisma = prisma;

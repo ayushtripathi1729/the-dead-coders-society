@@ -103,7 +103,7 @@ export default async function PlayerPage({ params }: { params: Promise<{ usernam
                   <tr><th className="px-3 py-2">Contest</th><th className="px-3 py-2">Rank</th><th className="px-3 py-2">Solved</th><th className="px-3 py-2">Problems</th><th className="px-3 py-2">Penalty</th><th className="px-3 py-2">Raw Score</th><th className="px-3 py-2">Contest Score</th><th className="px-3 py-2">Bonus</th><th className="px-3 py-2">Final Score</th></tr>
                 </thead>
                 <tbody>
-                  {player.history.map(({ contest, entry }) => (
+                  {player.history.map(({ contest, entry }: PlayerHistoryItem) => (
                     <tr key={contest.id} className="border-t border-white/10">
                       <td className="px-3 py-3 font-[family-name:var(--font-display)] text-white">{contest.title}</td>
                       <td className="px-3 py-3">#{entry.rank}</td>

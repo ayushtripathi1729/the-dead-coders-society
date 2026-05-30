@@ -10,9 +10,12 @@ import { Nav } from "@/components/nav";
 import { StatusBadge } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
 import { listContests, monthlyLeaderboard, yearlyLeaderboard } from "@/lib/leaderboards";
+import type { ContestEntryView, ContestView } from "@/lib/types";
 import { formatDateUTC } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
+
+type HomeWinner = { contest: ContestView; winner: ContestEntryView };
 
 export default async function Home() {
   const now = new Date();
@@ -27,7 +30,7 @@ export default async function Home() {
   const latestContest = liveContest ?? upcomingContest ?? completedContest;
   const previousContest = contests.find((contest) => contest.status === "COMPLETED" && contest.standingsFinalizedAt && contest.entries.length);
   const upcoming = contests.filter((contest) => contest.status === "UPCOMING").sort((a, b) => a.startTime.localeCompare(b.startTime)).slice(0, 3);
-  const winners = contests.filter((contest) => contest.status === "COMPLETED" && contest.standingsFinalizedAt && contest.entries.length).map((contest) => ({ contest, winner: contest.entries[0] })).slice(0, 3);
+  const winners: HomeWinner[] = contests.filter((contest) => contest.status === "COMPLETED" && contest.standingsFinalizedAt && contest.entries.length).map((contest) => ({ contest, winner: contest.entries[0] })).slice(0, 3);
   const totalSolves = year.rows.reduce((sum, row) => sum + row.solved, 0);
 
   return (
@@ -135,7 +138,7 @@ export default async function Home() {
 
         <section className="mt-5 grid gap-5 lg:grid-cols-3">
           <Panel title="Recent Champions" icon={<Crown className="size-6" />}>
-            {winners.length ? winners.map(({ contest, winner }) => (
+            {winners.length ? winners.map(({ contest, winner }: HomeWinner) => (
               <Link href={`/players/${winner.username}`} key={contest.id} className="ledger-row">
                 <span>{winner.fullName}</span><span className="ml-auto text-[#9AFF00]">{winner.finalScore}</span>
               </Link>

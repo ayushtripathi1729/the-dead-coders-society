@@ -12,6 +12,12 @@ import { formatDateUTC } from "@/lib/utils";
 type ActivityLogView = { id: string; action: string; entity: string; entityId: string | null; createdAt: string };
 type CoordinatorDraft = { name: string; role: string; email: string; phone: string; discord: string };
 type ProblemDraft = { code: string; title: string; points: number; firstSolveUsernames: string[] };
+type ContestCoordinatorView = ContestView["coordinators"][number];
+type ContestMutationResponse = { contest: { id: string } };
+type StandingsDraftResponse = { saved: number };
+type CodeforcesSyncResponse = { imported: number };
+type FinalizeStandingsResponse = { finalized?: boolean; rows?: number };
+type SubmitJson = <TResponse = unknown>(endpoint: string, body: Record<string, unknown>, method?: string) => Promise<TResponse>;
 
 const emptyCoordinator: CoordinatorDraft = { name: "", role: "", email: "", phone: "", discord: "" };
 function defaultProblems(count = 5): ProblemDraft[] {
@@ -56,7 +62,7 @@ export function AdminWorkbench({ contests, activityLogs }: { contests: ContestVi
   const [isPending, startTransition] = useTransition();
   const activeContest = useMemo(() => contestList.find((contest) => contest.id === selectedContest), [contestList, selectedContest]);
 
-  async function submitJson(endpoint: string, body: Record<string, unknown>, method = "POST") {
+  const submitJson: SubmitJson = async <TResponse,>(endpoint: string, body: Record<string, unknown>, method = "POST"): Promise<TResponse> => {
     const response = await fetch(endpoint, {
       method,
       headers: { "Content-Type": "application/json" },
@@ -64,8 +70,8 @@ export function AdminWorkbench({ contests, activityLogs }: { contests: ContestVi
     });
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.error ?? "Request failed.");
-    return payload;
-  }
+    return payload as TResponse;
+  };
 
   async function refreshContests(nextSelectedId?: string) {
     const response = await fetch("/api/admin/contests", { cache: "no-store" });
@@ -96,7 +102,7 @@ export function AdminWorkbench({ contests, activityLogs }: { contests: ContestVi
         const body: Record<string, unknown> = Object.fromEntries(new FormData(form).entries());
         body.coordinators = coordinators.filter((coordinator) => coordinator.name && coordinator.phone && coordinator.role);
         if (!activeContest?.standingsFinalizedAt) body.problems = problems;
-        const payload = await submitJson(id ? `/api/admin/contests/${id}` : "/api/admin/contests", body, id ? "PATCH" : "POST");
+        const payload = await submitJson<ContestMutationResponse>(id ? `/api/admin/contests/${id}` : "/api/admin/contests", body, id ? "PATCH" : "POST");
         await refreshContests(payload.contest.id);
         setMessage(id ? "Contest updated. Refresh after final review to confirm public surfaces." : "Contest created. Upload assets or add standings next.");
       } catch (error) {
@@ -126,7 +132,7 @@ export function AdminWorkbench({ contests, activityLogs }: { contests: ContestVi
     if (!contest) return;
     startTransition(async () => {
       try {
-        const payload = await submitJson("/api/admin/contests", {
+        const payload = await submitJson<ContestMutationResponse>("/api/admin/contests", {
           title: `${contest.title} Copy`,
           description: contest.description,
           invitePoster: contest.invitePoster ?? "",
@@ -139,7 +145,7 @@ export function AdminWorkbench({ contests, activityLogs }: { contests: ContestVi
           visibility: contest.visibility,
           scoringSystem: contest.scoringSystem,
           prizePool: contest.prizePool ?? "",
-          coordinators: contest.coordinators.map(({ name, role, email, phone, discord }) => ({ name, role, email, phone, discord })),
+          coordinators: contest.coordinators.map(({ name, role, email, phone, discord }: ContestCoordinatorView) => ({ name, role, email, phone, discord })),
           problems: contest.problems.map((problem) => ({
             code: problem.code,
             title: problem.title ?? "",
@@ -254,7 +260,7 @@ export function AdminWorkbench({ contests, activityLogs }: { contests: ContestVi
                   startTransition(async () => {
                     try {
                       const body = Object.fromEntries(new FormData(form).entries());
-                      const payload = await submitJson(`/api/admin/contests/${body.contestId}/entries`, body);
+                      const payload = await submitJson<StandingsDraftResponse>(`/api/admin/contests/${body.contestId}/entries`, body);
                       await refreshContests(String(body.contestId));
                       setMessage(`Saved ${payload.saved} standings rows and refreshed derived ledgers.`);
                     } catch (error) {
@@ -274,7 +280,7 @@ export function AdminWorkbench({ contests, activityLogs }: { contests: ContestVi
                   const body = Object.fromEntries(new FormData(event.currentTarget).entries());
                   startTransition(async () => {
                     try {
-                      const response = await submitJson(`/api/admin/contests/${body.contestId}/sync-codeforces`, body);
+                      const response = await submitJson<CodeforcesSyncResponse>(`/api/admin/contests/${body.contestId}/sync-codeforces`, body);
                       setMessage(`Imported ${response.imported} Codeforces rows.`);
                     } catch (error) {
                       setMessage(error instanceof Error ? `${error.message} Use private upload for mashups.` : "Sync failed.");
@@ -659,7 +665,7 @@ function ProblemEditor({ problems, entries, setProblems, finalized }: { problems
   );
 }
 
-function EntryEditor({ contestId, finalized, entries, submitJson, setMessage, startTransition, refreshContests, isPending }: { contestId: string; finalized: boolean; entries: ContestEntryView[]; submitJson: (endpoint: string, body: Record<string, unknown>, method?: string) => Promise<unknown>; setMessage: (message: string) => void; startTransition: (callback: () => void) => void; refreshContests: (id?: string) => Promise<void>; isPending: boolean }) {
+function EntryEditor({ contestId, finalized, entries, submitJson, setMessage, startTransition, refreshContests, isPending }: { contestId: string; finalized: boolean; entries: ContestEntryView[]; submitJson: SubmitJson; setMessage: (message: string) => void; startTransition: (callback: () => void) => void; refreshContests: (id?: string) => Promise<void>; isPending: boolean }) {
   return (
     <div className="mt-4 grid gap-3">
       <form
@@ -715,7 +721,7 @@ function EntryEditor({ contestId, finalized, entries, submitJson, setMessage, st
   );
 }
 
-function EntryRow({ contestId, finalized, entry, submitJson, setMessage, startTransition, refreshContests, isPending }: { contestId: string; finalized: boolean; entry: ContestEntryView; submitJson: (endpoint: string, body: Record<string, unknown>, method?: string) => Promise<unknown>; setMessage: (message: string) => void; startTransition: (callback: () => void) => void; refreshContests: (id?: string) => Promise<void>; isPending: boolean }) {
+function EntryRow({ contestId, finalized, entry, submitJson, setMessage, startTransition, refreshContests, isPending }: { contestId: string; finalized: boolean; entry: ContestEntryView; submitJson: SubmitJson; setMessage: (message: string) => void; startTransition: (callback: () => void) => void; refreshContests: (id?: string) => Promise<void>; isPending: boolean }) {
   const [fullName, setFullName] = useState(entry.fullName);
   const [username, setUsername] = useState(entry.username);
   const [solveVector, setSolveVector] = useState(JSON.stringify(entry.solveVector));
@@ -799,7 +805,7 @@ function toLocalInput(value?: string) {
   return value.slice(0, 16);
 }
 
-function deleteContest(id: string | undefined, submitJson: (endpoint: string, body: Record<string, unknown>, method?: string) => Promise<unknown>, setMessage: (message: string) => void, startTransition: (callback: () => void) => void, refreshContests: (id?: string) => Promise<void>) {
+function deleteContest(id: string | undefined, submitJson: SubmitJson, setMessage: (message: string) => void, startTransition: (callback: () => void) => void, refreshContests: (id?: string) => Promise<void>) {
   if (!id || !window.confirm("Delete this contest and its standings?")) return;
   startTransition(async () => {
     try {
@@ -812,7 +818,7 @@ function deleteContest(id: string | undefined, submitJson: (endpoint: string, bo
   });
 }
 
-function finalizeStandings(id: string, problems: ProblemDraft[], submitJson: (endpoint: string, body: Record<string, unknown>, method?: string) => Promise<unknown>, setMessage: (message: string) => void, startTransition: (callback: () => void) => void, refreshContests: (id?: string) => Promise<void>) {
+function finalizeStandings(id: string, problems: ProblemDraft[], submitJson: SubmitJson, setMessage: (message: string) => void, startTransition: (callback: () => void) => void, refreshContests: (id?: string) => Promise<void>) {
   if (!window.confirm("Have all participants been entered?")) return;
   startTransition(async () => {
     try {
@@ -824,7 +830,7 @@ function finalizeStandings(id: string, problems: ProblemDraft[], submitJson: (en
           points: problem.points,
           firstSolveUsernames: problem.firstSolveUsernames,
         }));
-      const response = await submitJson(`/api/admin/contests/${id}/entries`, { action: "finalize", problems: payloadProblems }, "PATCH") as { finalized?: boolean; rows?: number };
+      const response = await submitJson<FinalizeStandingsResponse>(`/api/admin/contests/${id}/entries`, { action: "finalize", problems: payloadProblems }, "PATCH");
       await refreshContests(id);
       setMessage(response.finalized ? `Finalized ${response.rows ?? 0} standings rows and rebuilt all ledgers.` : "Standings were already finalized. Ledgers are protected.");
     } catch (error) {
@@ -833,7 +839,7 @@ function finalizeStandings(id: string, problems: ProblemDraft[], submitJson: (en
   });
 }
 
-function saveProblems(id: string, problems: ProblemDraft[], submitJson: (endpoint: string, body: Record<string, unknown>, method?: string) => Promise<unknown>, setMessage: (message: string) => void, startTransition: (callback: () => void) => void, refreshContests: (id?: string) => Promise<void>) {
+function saveProblems(id: string, problems: ProblemDraft[], submitJson: SubmitJson, setMessage: (message: string) => void, startTransition: (callback: () => void) => void, refreshContests: (id?: string) => Promise<void>) {
   startTransition(async () => {
     try {
       const payloadProblems = problems
@@ -868,11 +874,11 @@ function contestPayload(contest: ContestView, overrides: Partial<ContestView> = 
     visibility: next.visibility,
     scoringSystem: next.scoringSystem,
     prizePool: next.prizePool ?? "",
-    coordinators: next.coordinators.map(({ name, role, email, phone, discord }) => ({ name, role, email, phone, discord })),
+    coordinators: next.coordinators.map(({ name, role, email, phone, discord }: ContestCoordinatorView) => ({ name, role, email, phone, discord })),
   };
 }
 
-function updateContestVisibility(contest: ContestView | undefined, visibility: ContestView["visibility"], submitJson: (endpoint: string, body: Record<string, unknown>, method?: string) => Promise<unknown>, setMessage: (message: string) => void, startTransition: (callback: () => void) => void, refreshContests: (id?: string) => Promise<void>) {
+function updateContestVisibility(contest: ContestView | undefined, visibility: ContestView["visibility"], submitJson: SubmitJson, setMessage: (message: string) => void, startTransition: (callback: () => void) => void, refreshContests: (id?: string) => Promise<void>) {
   if (!contest) return;
   startTransition(async () => {
     try {
@@ -885,7 +891,7 @@ function updateContestVisibility(contest: ContestView | undefined, visibility: C
   });
 }
 
-function recalculateContest(id: string | undefined, submitJson: (endpoint: string, body: Record<string, unknown>, method?: string) => Promise<unknown>, setMessage: (message: string) => void, startTransition: (callback: () => void) => void, refreshContests: (id?: string) => Promise<void>) {
+function recalculateContest(id: string | undefined, submitJson: SubmitJson, setMessage: (message: string) => void, startTransition: (callback: () => void) => void, refreshContests: (id?: string) => Promise<void>) {
   if (!id) return;
   startTransition(async () => {
     try {

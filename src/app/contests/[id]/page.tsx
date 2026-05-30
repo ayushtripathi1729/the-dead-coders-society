@@ -6,16 +6,21 @@ import { LeaderboardTable } from "@/components/leaderboard-table";
 import { Nav } from "@/components/nav";
 import { StatusBadge } from "@/components/status-badge";
 import { getContest } from "@/lib/leaderboards";
+import type { ContestView } from "@/lib/types";
 import { formatDateUTC } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
+
+type ContestStat = { Icon: LucideIcon; label: string; value: string };
+type ContestProblemView = ContestView["problems"][number];
+type ContestCoordinatorView = ContestView["coordinators"][number];
 
 export default async function ContestPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const contest = await getContest(id);
   if (!contest) notFound();
   const bannerPoster = contest.bannerPoster || contest.contestBanner || "/deadcoders/poster2.png";
-  const stats: { Icon: LucideIcon; label: string; value: string }[] = [
+  const stats: ContestStat[] = [
     { Icon: Calendar, label: "Starts", value: formatDateUTC(contest.startTime) },
     { Icon: Gauge, label: "Total", value: `${contest.totalPoints} pts` },
     { Icon: Trophy, label: "Winner", value: contest.entries[0]?.fullName ?? "TBD" },
@@ -44,7 +49,7 @@ export default async function ContestPage({ params }: { params: Promise<{ id: st
               </div>
               <p className="mt-4 font-[family-name:var(--font-mono)] text-lg text-zinc-300">{contest.description}</p>
               <div className="mt-8 grid gap-3 sm:grid-cols-3">
-                {stats.map(({ Icon, label, value }) => (
+                {stats.map(({ Icon, label, value }: ContestStat) => (
                   <div key={label} className="clip-arena border border-[#9AFF00]/20 bg-black/50 p-4 shadow-[inset_0_0_20px_rgba(154,255,0,.04)]">
                     <Icon className="size-5 text-[#9AFF00] drop-shadow-[0_0_12px_#9AFF00]" />
                     <p className="mt-2 text-[10px] uppercase tracking-[0.2em] text-zinc-500">{label}</p>
@@ -75,7 +80,7 @@ export default async function ContestPage({ params }: { params: Promise<{ id: st
           <div className="section-band p-5">
             <h2 className="section-rune font-[family-name:var(--font-display)] text-xl uppercase">Problem List & First Solves</h2>
             <div className="mt-4 grid gap-3">
-              {contest.problems.map((problem) => (
+              {contest.problems.map((problem: ContestProblemView) => (
                 <div key={problem.id} className="ledger-row">
                   <span className="font-[family-name:var(--font-display)] text-[#F3C55B]">{problem.code}</span>
                   <span>{problem.title || "Problem"} ({problem.points} pts)</span>
@@ -96,7 +101,7 @@ export default async function ContestPage({ params }: { params: Promise<{ id: st
             <h2 className="section-rune font-[family-name:var(--font-display)] text-xl uppercase">Coordinators</h2>
           </div>
           <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-            {contest.coordinators.length ? contest.coordinators.map((coordinator) => (
+            {contest.coordinators.length ? contest.coordinators.map((coordinator: ContestCoordinatorView) => (
               <div key={coordinator.id} className="clip-arena border border-[#9AFF00]/20 bg-black/50 p-4 shadow-[0_0_28px_rgba(154,255,0,.06)]">
                 <div className="flex items-center gap-3">
                   <div className="grid size-12 place-items-center rounded-full border border-[#9AFF00]/35 bg-[#9AFF00]/10 font-[family-name:var(--font-display)] text-[#9AFF00]">

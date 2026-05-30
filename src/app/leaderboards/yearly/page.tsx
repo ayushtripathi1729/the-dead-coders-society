@@ -8,13 +8,15 @@ import { yearlyLeaderboard } from "@/lib/leaderboards";
 
 export const dynamic = "force-dynamic";
 
+type YearlyStat = { Icon: LucideIcon; label: string; name?: string; value?: number };
+
 export default async function YearlyPage() {
   const activeYear = new Date().getUTCFullYear();
   const board = await yearlyLeaderboard(activeYear);
   const top = board.rows[0];
   const mostWins = [...board.rows].sort((a, b) => b.wins - a.wins)[0];
   const firsts = [...board.rows].sort((a, b) => b.firstSolves - a.firstSolves)[0];
-  const stats: { Icon: LucideIcon; label: string; name?: string; value?: number }[] = [
+  const stats: YearlyStat[] = [
     { Icon: Crown, label: "Highest Scorer", name: top?.fullName, value: top?.totalScore },
     { Icon: Award, label: "Most Contest Wins", name: mostWins?.fullName, value: mostWins?.wins },
     { Icon: Bolt, label: "Most Problem Firsts", name: firsts?.fullName, value: firsts?.firstSolves },
@@ -36,7 +38,7 @@ export default async function YearlyPage() {
         </section>
         <div className="mt-8">{board.rows.length ? <Podium rows={board.rows} /> : <div className="empty-plaque clip-arena p-8 text-center"><p className="certificate-title text-3xl text-[#9AFF00]">No yearly rankings</p><p className="mt-2 text-zinc-400">Complete contests will build the championship wall.</p></div>}</div>
         <section className="mt-8 grid gap-4 md:grid-cols-3">
-          {stats.map(({ Icon, label, name, value }) => (
+          {stats.map(({ Icon, label, name, value }: YearlyStat) => (
             <div key={label} className="certificate-frame clip-arena p-5">
               <Icon className="size-8 text-[#F3C55B] drop-shadow-[0_0_14px_#F3C55B]" />
               <p className="mt-4 text-xs uppercase tracking-[0.2em] text-zinc-500">{label}</p>
