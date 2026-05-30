@@ -5,11 +5,13 @@ import { ArenaBackground } from "@/components/arena-background";
 import { Nav } from "@/components/nav";
 import { PlayerChart } from "@/components/player-chart";
 import { yearLabel } from "@/lib/labels";
-import { getPlayer } from "@/lib/leaderboards";
+import { getPlayer, type PlayerProfile } from "@/lib/leaderboards";
 
 export const dynamic = "force-dynamic";
 
 type ChartPoint = { contest: string; score: number };
+type PlayerHistoryItem = PlayerProfile["history"][number];
+type PlayerRating = PlayerProfile["ratings"][number];
 
 export default async function PlayerPage({ params }: { params: Promise<{ username: string }> }) {
   const { username } = await params;
@@ -19,14 +21,14 @@ export default async function PlayerPage({ params }: { params: Promise<{ usernam
   const scoreChart = player.history
     .slice()
     .reverse()
-    .reduce((chart: ChartPoint[], { contest, entry }): ChartPoint[] => [
+    .reduce((chart: ChartPoint[], { contest, entry }: PlayerHistoryItem): ChartPoint[] => [
       ...chart,
       { contest: contest.title.slice(0, 14), score: (chart.at(-1)?.score ?? 0) + entry.finalScore },
     ], []);
   const ratingChart = player.ratings.length
-    ? player.ratings.map((rating, index) => ({ contest: `R${index + 1}`, score: rating.rating }))
+    ? player.ratings.map((rating: PlayerRating, index: number): ChartPoint => ({ contest: `R${index + 1}`, score: rating.rating }))
     : [{ contest: "Base", score: player.rating }];
-  const placementChart = player.history.slice().reverse().map(({ contest, entry }) => ({ contest: contest.title.slice(0, 14), score: entry.rank }));
+  const placementChart = player.history.slice().reverse().map(({ contest, entry }: PlayerHistoryItem): ChartPoint => ({ contest: contest.title.slice(0, 14), score: entry.rank }));
   const activityCells = Array.from({ length: 42 }, (_, index) => {
     const entry = player.history[index % Math.max(player.history.length, 1)]?.entry;
     return entry ? Math.min(4, Math.max(1, Math.ceil(entry.solved / 2))) : 0;

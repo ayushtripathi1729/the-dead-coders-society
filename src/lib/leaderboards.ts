@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { Contest, ContestCoordinator, ContestProblem, ContestStanding, FirstSolve, Player } from "@prisma/client";
+import type { Achievement, Contest, ContestCoordinator, ContestParticipation, ContestProblem, ContestStanding, FirstSolve, Player, RatingHistory } from "@prisma/client";
 import { contestStatusAt } from "@/lib/contest-status";
 import { prisma } from "@/lib/prisma";
 import type { ContestView, LeaderboardRow } from "@/lib/types";
@@ -10,6 +10,44 @@ type ContestWithEntries = Contest & {
   standings: EntryWithPlayer[];
   coordinators: ContestCoordinator[];
   problems: (ContestProblem & { firstSolves: (FirstSolve & { player: Player })[] })[];
+};
+type PlayerStandingWithContest = ContestStanding & { contest: Contest };
+type PlayerParticipationWithContest = ContestParticipation & { contest: Contest };
+
+export type PlayerProfile = {
+  username: string;
+  fullName: string;
+  year: number;
+  rating: number;
+  peakRating: number;
+  totalScore: number;
+  currentRank: number;
+  yearlyRank: number;
+  monthlyRank: number;
+  wins: number;
+  podiums: number;
+  firstSolves: number;
+  solved: number;
+  participationCount: number;
+  averagePlacement: number;
+  bestPlacement: number;
+  history: { contest: Contest; entry: PlayerStandingWithContest }[];
+  participations: PlayerParticipationWithContest[];
+  ratings: RatingHistory[];
+  achievements: Achievement[];
+  firstSolveHistory: {
+    id: string;
+    problemCode: string;
+    pointsAwarded: number;
+    contest: Contest;
+  }[];
+  winrate: number;
+  ratingDeltaHistory: {
+    contestId: string | null;
+    delta: number;
+    rating: number;
+    createdAt: string;
+  }[];
 };
 
 function toContestView(contest: ContestWithEntries): ContestView {
@@ -89,7 +127,7 @@ const contestInclude = {
   problems: { include: { firstSolves: { include: { player: true } } } },
 };
 
-export async function listContests({ includeHidden = false } = {}) {
+export async function listContests({ includeHidden = false }: { includeHidden?: boolean } = {}): Promise<ContestView[]> {
   const contests = await prisma.contest.findMany({
     where: includeHidden ? undefined : { visibility: { not: "PRIVATE" } },
     include: contestInclude,
@@ -98,7 +136,7 @@ export async function listContests({ includeHidden = false } = {}) {
   return contests.map(toContestView);
 }
 
-export async function getContest(idOrSlug: string) {
+export async function getContest(idOrSlug: string): Promise<ContestView | null> {
   const contest = await prisma.contest.findFirst({
     where: { OR: [{ id: idOrSlug }, { slug: idOrSlug }] },
     include: contestInclude,
@@ -146,7 +184,7 @@ function aggregate(entries: EntryWithPlayer[]): LeaderboardRow[] {
     }));
 }
 
-export async function monthlyLeaderboard(year: number, month: number) {
+export async function monthlyLeaderboard(year: number, month: number): Promise<{ contests: ContestView[]; rows: LeaderboardRow[] }> {
   const start = new Date(Date.UTC(year, month - 1, 1));
   const end = new Date(Date.UTC(year, month, 1));
   const contests = await prisma.contest.findMany({
@@ -157,7 +195,7 @@ export async function monthlyLeaderboard(year: number, month: number) {
   return { contests: contests.map(toContestView), rows: aggregate(contests.flatMap((contest) => contest.standings)) };
 }
 
-export async function yearlyLeaderboard(year: number) {
+export async function yearlyLeaderboard(year: number): Promise<{ contests: ContestView[]; rows: LeaderboardRow[] }> {
   const start = new Date(Date.UTC(year, 0, 1));
   const end = new Date(Date.UTC(year + 1, 0, 1));
   const contests = await prisma.contest.findMany({
@@ -168,7 +206,7 @@ export async function yearlyLeaderboard(year: number) {
   return { contests: contests.map(toContestView), rows: aggregate(contests.flatMap((contest) => contest.standings)) };
 }
 
-export async function getPlayer(username: string) {
+export async function getPlayer(username: string): Promise<PlayerProfile | null> {
   const player = await prisma.player.findUnique({
     where: { username: username.toLowerCase() },
     include: {
