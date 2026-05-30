@@ -78,15 +78,19 @@ export default async function ContestPage({ params }: { params: Promise<{ id: st
             </div>
           </div>
           <div className="section-band p-5">
-            <h2 className="section-rune font-[family-name:var(--font-display)] text-xl uppercase">Problem List & First Solves</h2>
+            <h2 className="section-rune font-[family-name:var(--font-display)] text-xl uppercase">First Solves</h2>
             <div className="mt-4 grid gap-3">
-              {contest.problems.map((problem: ContestProblemView) => (
-                <div key={problem.id} className="ledger-row">
-                  <span className="font-[family-name:var(--font-display)] text-[#F3C55B]">{problem.code}</span>
-                  <span>{problem.title || "Problem"} ({problem.points} pts)</span>
-                  <span className="ml-auto text-[#9AFF00]">{problem.firstSolves.length ? problem.firstSolves.map((firstSolve) => `@${firstSolve.player.username}`).join(", ") : "No first solve"}</span>
-                </div>
-              ))}
+              {contest.problems.map((problem: ContestProblemView) => {
+                const firstSolve = problem.firstSolves[0];
+                const solver = firstSolve?.status === "ASSIGNED" && firstSolve.player ? `@${firstSolve.player.username}` : "UNSOLVED";
+                return (
+                  <div key={problem.id} className="ledger-row">
+                    <span className="font-[family-name:var(--font-display)] text-[#F3C55B]">Problem {problem.code}</span>
+                    <span>{problem.title || `${problem.points} pts`}</span>
+                    <span className="ml-auto text-[#9AFF00]">{solver}</span>
+                  </div>
+                );
+              })}
               {!contest.problems.length && <p className="text-sm text-zinc-500">No contest problems recorded.</p>}
             </div>
           </div>

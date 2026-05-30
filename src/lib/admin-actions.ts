@@ -22,8 +22,18 @@ const problemSchema = z.object({
   code: z.string().min(1).max(16),
   title: z.string().max(120).optional().or(z.literal("")).nullable(),
   points: z.coerce.number().int().positive().max(1_000_000),
-  firstSolveUsernames: z.array(z.string().min(1).max(48)).default([]),
+  firstSolveStatus: z.enum(["ASSIGNED", "UNSOLVED", "NONE"]).optional(),
+  firstSolveUsername: z.string().min(1).max(48).optional().or(z.literal("")).nullable(),
+  firstSolveUsernames: z.array(z.string().min(1).max(48)).optional(),
 });
+
+type ParsedProblem = {
+  code: string;
+  title?: string | null;
+  points: number;
+  firstSolveStatus: "ASSIGNED" | "UNSOLVED" | "NONE";
+  firstSolveUsername: string | null;
+};
 
 const playerInputSchema = z.object({
   fullName: z.string().trim().min(1).max(120),
@@ -79,7 +89,8 @@ const defaultProblems = Array.from({ length: 5 }, (_, index) => ({
   code: String.fromCharCode("A".charCodeAt(0) + index),
   title: "",
   points: (index + 1) * 100,
-  firstSolveUsernames: [],
+  firstSolveStatus: "NONE" as const,
+  firstSolveUsername: null,
 }));
 
 function rankEntries(entries: EntryInput[], problems: { code: string; points: number }[]) {
@@ -138,7 +149,19 @@ function parseSolveVector(value: unknown) {
 }
 
 function parseProblems(rawProblems: unknown[]) {
-  const problems = rawProblems.map((problem) => problemSchema.parse(problem));
+  const problems: ParsedProblem[] = rawProblems.map((problem) => {
+    const parsed = problemSchema.parse(problem);
+    const username = (parsed.firstSolveUsername || parsed.firstSolveUsernames?.[0] || "").trim().toLowerCase();
+    const status = parsed.firstSolveStatus ?? (username ? "ASSIGNED" : "NONE");
+    if (status === "ASSIGNED" && !username) throw new Error(`First solve assignment for problem "${parsed.code}" requires a username.`);
+    return {
+      code: parsed.code,
+      title: parsed.title,
+      points: parsed.points,
+      firstSolveStatus: status,
+      firstSolveUsername: status === "ASSIGNED" ? username : null,
+    };
+  });
   if (!problems.length) throw new Error("Add at least one contest problem.");
   const seenProblemCodes = new Set<string>();
   for (const problem of problems) {
@@ -244,7 +267,7 @@ export async function upsertContestEntries(contestId: string, rawEntries: unknow
     const rows = await replaceContestStandings(contestId, [...merged.values()], tx);
     await refreshAllDerived(tx);
     return rows;
-  }, { maxWait: 10_000, timeout: 30_000 });
+  }, { maxWait: 10_000, timeout: 120_000 });
 
   await logActivity(adminId, entries.length === 1 ? "participant.added" : "standings.draft.upsert", "ContestStanding", contestId, { rows: saved.length });
   return saved;
@@ -259,7 +282,7 @@ export async function updateContestEntry(contestId: string, standingId: string, 
     const next = rows.map((row) => row.id === standingId ? entry : { username: row.player.username, fullName: row.player.fullName, solveVector: row.solveVector, penalty: row.penalty, notes: row.notes });
     await replaceContestStandings(contestId, next, tx);
     await refreshAllDerived(tx);
-  }, { maxWait: 10_000, timeout: 30_000 });
+  }, { maxWait: 10_000, timeout: 120_000 });
   await logActivity(adminId, "participant.edited", "ContestStanding", standingId, { contestId });
 }
 
@@ -273,7 +296,7 @@ export async function deleteContestEntry(contestId: string, standingId: string, 
     const rows = await tx.contestStanding.findMany({ where: { contestId }, include: { player: true } });
     await replaceContestStandings(contestId, rows.map((row) => ({ username: row.player.username, fullName: row.player.fullName, solveVector: row.solveVector, penalty: row.penalty, notes: row.notes })), tx);
     await refreshAllDerived(tx);
-  }, { maxWait: 10_000, timeout: 30_000 });
+  }, { maxWait: 10_000, timeout: 120_000 });
   await logActivity(adminId, "participant.deleted", "ContestStanding", standingId, { contestId });
 }
 
@@ -338,7 +361,7 @@ export async function saveContestProblemDraft(contestId: string, rawProblems: un
       },
     });
     await refreshAllDerived(tx);
-  }, { maxWait: 10_000, timeout: 30_000 });
+  }, { maxWait: 10_000, timeout: 120_000 });
 }
 
 export async function finalizeContestStandings(contestId: string, rawProblems: unknown[] = [], adminId?: string) {
@@ -376,7 +399,7 @@ export async function recalculateContest(contestId: string, adminId?: string) {
     const rows = await tx.contestStanding.findMany({ where: { contestId }, include: { player: true } });
     await replaceContestStandings(contestId, rows.map((row) => ({ username: row.player.username, fullName: row.player.fullName, solveVector: row.solveVector, penalty: row.penalty, notes: row.notes })), tx);
     await refreshAllDerived(tx);
-  }, { maxWait: 10_000, timeout: 30_000 });
+  }, { maxWait: 10_000, timeout: 120_000 });
   await logActivity(adminId, "standings.recalculate", "Contest", contestId);
 }
 
@@ -505,7 +528,7 @@ export async function updatePlayerProfile(username: string, input: unknown, admi
   return player;
 }
 
-async function saveContestProblems(contestId: string, problems: z.infer<typeof problemSchema>[], db: DbClient) {
+async function saveContestProblems(contestId: string, problems: ParsedProblem[], db: DbClient) {
   await db.contestProblem.deleteMany({ where: { contestId } });
   const standingPlayers = await db.contestStanding.findMany({ where: { contestId }, include: { player: true } });
   const playersByUsername = new Map(standingPlayers.map((standing) => [standing.player.username.toLowerCase(), standing.player]));
@@ -521,14 +544,22 @@ async function saveContestProblems(contestId: string, problems: z.infer<typeof p
       },
     });
 
-    const uniqueUsernames = [...new Set(problem.firstSolveUsernames.map((username) => username.trim().toLowerCase()).filter(Boolean))];
-    for (const username of uniqueUsernames) {
-      const player = playersByUsername.get(username);
-      if (!player) throw new Error(`First solve user "${username}" is not in this contest's standings.`);
+    if (problem.firstSolveStatus === "UNSOLVED") {
+      await db.firstSolve.create({
+        data: {
+          problem: { connect: { id: contestProblem.id } },
+          status: "UNSOLVED",
+        },
+      });
+    }
+    if (problem.firstSolveStatus === "ASSIGNED" && problem.firstSolveUsername) {
+      const player = playersByUsername.get(problem.firstSolveUsername);
+      if (!player) throw new Error(`First solve user "${problem.firstSolveUsername}" is not in this contest's standings.`);
       await db.firstSolve.create({
         data: {
           player: { connect: { username: player.username } },
           problem: { connect: { id: contestProblem.id } },
+          status: "ASSIGNED",
         },
       });
     }
@@ -551,9 +582,11 @@ async function saveContestProblems(contestId: string, problems: z.infer<typeof p
 
 async function syncFirstSolveCounts(contestId: string, db: DbClient) {
   await db.contestStanding.updateMany({ where: { contestId }, data: { firstSolves: 0 } });
-  const firstSolves = await db.firstSolve.findMany({ where: { problem: { contestId } }, select: { playerUsername: true } });
+  const firstSolves = await db.firstSolve.findMany({ where: { status: "ASSIGNED", playerUsername: { not: null }, problem: { contestId } }, select: { playerUsername: true } });
   const counts = new Map<string, number>();
-  for (const firstSolve of firstSolves) counts.set(firstSolve.playerUsername, (counts.get(firstSolve.playerUsername) ?? 0) + 1);
+  for (const firstSolve of firstSolves) {
+    if (firstSolve.playerUsername) counts.set(firstSolve.playerUsername, (counts.get(firstSolve.playerUsername) ?? 0) + 1);
+  }
   for (const [playerUsername, firstSolves] of counts) {
     await db.contestStanding.updateMany({ where: { contestId, playerUsername }, data: { firstSolves } });
   }

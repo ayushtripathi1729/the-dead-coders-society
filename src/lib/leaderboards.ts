@@ -9,7 +9,7 @@ type EntryWithPlayer = ContestStanding & { player: Player };
 type ContestWithEntries = Contest & {
   standings: EntryWithPlayer[];
   coordinators: ContestCoordinator[];
-  problems: (ContestProblem & { firstSolves: (FirstSolve & { player: Player })[] })[];
+  problems: (ContestProblem & { firstSolves: (FirstSolve & { player: Player | null })[] })[];
 };
 type PlayerStandingWithContest = ContestStanding & { contest: Contest };
 type PlayerParticipationWithContest = ContestParticipation & { contest: Contest };
@@ -39,6 +39,7 @@ export type PlayerProfile = {
     id: string;
     problemCode: string;
     pointsAwarded: number;
+    createdAt: string;
     contest: Contest;
   }[];
   winrate: number;
@@ -79,12 +80,13 @@ function toContestView(contest: ContestWithEntries): ContestView {
       discord: coordinator.discord,
     })),
     firstSolveRows: contest.problems
-      .flatMap((problem) => problem.firstSolves.map((firstSolve) => ({
+      .flatMap((problem) => problem.firstSolves.filter((firstSolve) => firstSolve.status === "ASSIGNED" && firstSolve.player).map((firstSolve) => ({
         id: firstSolve.id,
         problemCode: problem.code,
         timestamp: firstSolve.createdAt.toISOString(),
         pointsAwarded: problem.points,
-        player: { username: firstSolve.player.username, fullName: firstSolve.player.fullName },
+        status: firstSolve.status,
+        player: { username: firstSolve.player!.username, fullName: firstSolve.player!.fullName },
       })))
       .sort((a, b) => a.problemCode.localeCompare(b.problemCode) || a.player.username.localeCompare(b.player.username)),
     problems: contest.problems
@@ -97,7 +99,8 @@ function toContestView(contest: ContestWithEntries): ContestView {
         sortOrder: problem.sortOrder,
         firstSolves: problem.firstSolves.map((firstSolve) => ({
           id: firstSolve.id,
-          player: { username: firstSolve.player.username, fullName: firstSolve.player.fullName },
+          status: firstSolve.status,
+          player: firstSolve.player ? { username: firstSolve.player.username, fullName: firstSolve.player.fullName } : null,
         })),
       })),
     entries: contest.standings
@@ -218,7 +221,7 @@ export async function getPlayer(username: string): Promise<PlayerProfile | null>
       ratingHistory: { orderBy: { createdAt: "asc" } },
       achievements: { orderBy: { earnedAt: "desc" } },
       firstSolveRows: {
-        where: { problem: { contest: { standingsFinalizedAt: { not: null }, visibility: { not: "PRIVATE" } } } },
+        where: { status: "ASSIGNED", problem: { contest: { visibility: { not: "PRIVATE" } } } },
         include: { problem: { include: { contest: true } } },
         orderBy: { createdAt: "desc" },
       },
@@ -256,6 +259,7 @@ export async function getPlayer(username: string): Promise<PlayerProfile | null>
       id: firstSolve.id,
       problemCode: firstSolve.problem.code,
       pointsAwarded: firstSolve.problem.points,
+      createdAt: firstSolve.createdAt.toISOString(),
       contest: firstSolve.problem.contest,
     })),
     winrate: player.contestsPlayed ? Number(((player.wins / player.contestsPlayed) * 100).toFixed(1)) : 0,

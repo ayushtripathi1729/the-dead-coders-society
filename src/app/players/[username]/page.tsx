@@ -6,6 +6,7 @@ import { Nav } from "@/components/nav";
 import { PlayerChart } from "@/components/player-chart";
 import { yearLabel } from "@/lib/labels";
 import { getPlayer, type PlayerProfile } from "@/lib/leaderboards";
+import { formatDateUTC } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 
@@ -111,9 +112,9 @@ export default async function PlayerPage({ params }: { params: Promise<{ usernam
           <div className="mt-5 grid gap-3">
             {player.firstSolveHistory.length ? player.firstSolveHistory.map((firstSolve) => (
               <div key={firstSolve.id} className="ledger-row">
-                <span className="font-[family-name:var(--font-display)] text-white">{firstSolve.problemCode}</span>
-                <span className="text-zinc-500">{firstSolve.contest.title}</span>
-                <span className="ml-auto text-[#9AFF00]">{firstSolve.pointsAwarded} pts</span>
+                <span className="font-[family-name:var(--font-display)] text-white">{firstSolve.contest.title}</span>
+                <span className="text-zinc-500">Problem {firstSolve.problemCode}</span>
+                <span className="ml-auto text-[#9AFF00]">{formatDateUTC(firstSolve.createdAt)}</span>
               </div>
             )) : <p className="text-sm text-zinc-500">No first solve history recorded yet.</p>}
           </div>

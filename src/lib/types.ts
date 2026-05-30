@@ -60,6 +60,7 @@ export type ContestView = Omit<Contest, "bannerPoster" | "entries"> & {
     problemCode: string;
     timestamp: string;
     pointsAwarded: number;
+    status: "ASSIGNED" | "UNSOLVED";
     player: { username: string; fullName: string };
   }[];
   problems: {
@@ -70,7 +71,8 @@ export type ContestView = Omit<Contest, "bannerPoster" | "entries"> & {
     sortOrder: number;
     firstSolves: {
       id: string;
-      player: { username: string; fullName: string };
+      status: "ASSIGNED" | "UNSOLVED";
+      player: { username: string; fullName: string } | null;
     }[];
   }[];
   entries: ContestEntryView[];

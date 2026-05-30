@@ -12,7 +12,8 @@ import { formatDateUTC } from "@/lib/utils";
 type ActivityLogView = { id: string; action: string; entity: string; entityId: string | null; createdAt: string };
 type PlayerAdminView = { id: string; fullName: string; username: string; year: number; email: string | null; branchCourse: string | null; avatar: string | null; bio: string | null };
 type CoordinatorDraft = { name: string; role: string; email: string; phone: string; discord: string };
-type ProblemDraft = { code: string; title: string; points: number; firstSolveUsernames: string[] };
+type FirstSolveDraftStatus = "ASSIGNED" | "UNSOLVED" | "NONE";
+type ProblemDraft = { code: string; title: string; points: number; firstSolveUsername: string; firstSolveStatus: FirstSolveDraftStatus };
 type ContestCoordinatorView = ContestView["coordinators"][number];
 type ContestMutationResponse = { contest: { id: string } };
 type PlayerMutationResponse = { player: PlayerAdminView };
@@ -27,7 +28,8 @@ function defaultProblems(count = 5): ProblemDraft[] {
     code: nextProblemCode(index),
     title: "",
     points: (index + 1) * 100,
-    firstSolveUsernames: [],
+    firstSolveUsername: "",
+    firstSolveStatus: "NONE",
   }));
 }
 
@@ -45,12 +47,16 @@ function coordinatorDrafts(contest?: ContestView): CoordinatorDraft[] {
 
 function problemDrafts(contest?: ContestView): ProblemDraft[] {
   return contest?.problems.length
-    ? contest.problems.map((problem) => ({
-        code: problem.code,
-        title: problem.title ?? "",
-        points: problem.points,
-        firstSolveUsernames: problem.firstSolves.map((firstSolve) => firstSolve.player.username),
-      }))
+    ? contest.problems.map((problem) => {
+        const state = problem.firstSolves[0];
+        return {
+          code: problem.code,
+          title: problem.title ?? "",
+          points: problem.points,
+          firstSolveUsername: state?.player?.username ?? "",
+          firstSolveStatus: state?.status ?? "NONE",
+        };
+      })
     : defaultProblems();
 }
 
@@ -162,7 +168,8 @@ export function AdminWorkbench({ contests, activityLogs, players }: { contests: 
             code: problem.code,
             title: problem.title ?? "",
             points: problem.points,
-            firstSolveUsernames: [],
+            firstSolveUsername: "",
+            firstSolveStatus: "NONE",
           })),
         });
         await refreshContests(payload.contest.id);
@@ -633,26 +640,24 @@ function ProblemEditor({
     setProblems(problems.map((problem, itemIndex) => itemIndex === index ? { ...problem, [field]: field === "points" ? Number(value) : value } : problem));
   }
 
-  function addFirstSolver(index: number, value: string) {
+  function assignFirstSolver(index: number, value: string) {
     const username = value.replace(/^@/, "").trim();
-    if (!username) return;
-    const participant = entries.find((entry) => entry.username.toLowerCase() === username.toLowerCase());
-    if (!participant) return;
     setProblems(problems.map((problem, itemIndex) => {
       if (itemIndex !== index) return problem;
-      const selected = new Set(problem.firstSolveUsernames);
-      selected.add(participant.username);
-      return { ...problem, firstSolveUsernames: [...selected] };
+      if (!username) return { ...problem, firstSolveUsername: "", firstSolveStatus: "NONE" };
+      const participant = entries.find((entry) => entry.username.toLowerCase() === username.toLowerCase());
+      return participant ? { ...problem, firstSolveUsername: participant.username, firstSolveStatus: "ASSIGNED" } : problem;
     }));
     setSolverSearch("");
   }
 
-  function removeFirstSolver(index: number, username: string) {
-    setProblems(problems.map((problem, itemIndex) => itemIndex === index ? { ...problem, firstSolveUsernames: problem.firstSolveUsernames.filter((item) => item !== username) } : problem));
+  function markUnsolved(index: number) {
+    setProblems(problems.map((problem, itemIndex) => itemIndex === index ? { ...problem, firstSolveUsername: "", firstSolveStatus: "UNSOLVED" } : problem));
+    setSolverSearch("");
   }
 
   function addProblem() {
-    const nextProblem = { code: nextProblemCode(problems.length), title: "", points: (problems.length + 1) * 100, firstSolveUsernames: [] };
+    const nextProblem = { code: nextProblemCode(problems.length), title: "", points: (problems.length + 1) * 100, firstSolveUsername: "", firstSolveStatus: "NONE" as const };
     setProblems([...problems, nextProblem]);
     setSelectedProblemIndex(problems.length);
   }
@@ -716,33 +721,40 @@ function ProblemEditor({
                 onKeyDown={(event) => {
                   if (event.key === "Enter") {
                     event.preventDefault();
-                    addFirstSolver(selectedIndex, solverSearch);
+                    assignFirstSolver(selectedIndex, solverSearch);
                   }
                 }}
               />
               <datalist id="first-solver-options">
-                {entries
-                  .filter((entry) => !selectedProblem.firstSolveUsernames.includes(entry.username))
-                  .map((entry) => <option key={entry.username} value={`@${entry.username}`} />)}
+                {entries.map((entry) => <option key={entry.username} value={`@${entry.username}`} />)}
               </datalist>
-              <Button type="button" variant="ghost" disabled={!entries.length} className="w-full sm:w-auto" onClick={() => addFirstSolver(selectedIndex, solverSearch)}>Assign</Button>
+              <Button type="button" variant="ghost" disabled={!entries.length} className="w-full sm:w-auto" onClick={() => assignFirstSolver(selectedIndex, solverSearch)}>Assign</Button>
+            </div>
+            <div className="grid min-w-0 gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto]">
+              <select
+                value={selectedProblem.firstSolveStatus === "ASSIGNED" ? selectedProblem.firstSolveUsername : ""}
+                disabled={!entries.length}
+                onChange={(event) => assignFirstSolver(selectedIndex, event.target.value)}
+                className="terminal-field clip-arena min-w-0 truncate px-4 py-3 font-[family-name:var(--font-mono)] text-sm"
+              >
+                <option value="">Clear / None</option>
+                {entries.map((entry) => <option key={entry.username} value={entry.username}>@{entry.username}</option>)}
+              </select>
+              <Button type="button" variant="ghost" className="w-full sm:w-auto" onClick={() => markUnsolved(selectedIndex)}>Mark Unsolved</Button>
+              <Button type="button" variant="ghost" className="w-full sm:w-auto" onClick={() => assignFirstSolver(selectedIndex, "")}>Clear</Button>
             </div>
           </div>
 
           <div className="grid min-w-0 gap-2">
-            <p className="text-[10px] uppercase tracking-[0.18em] text-zinc-500">Assigned Solvers List</p>
+            <p className="text-[10px] uppercase tracking-[0.18em] text-zinc-500">Current State</p>
             <div className="flex max-h-28 min-w-0 flex-wrap gap-2 overflow-auto pr-1">
-              {selectedProblem.firstSolveUsernames.length ? selectedProblem.firstSolveUsernames.map((username) => (
-                <button
-                  key={username}
-                  type="button"
-                  title={`Remove @${username}`}
-                  onClick={() => removeFirstSolver(selectedIndex, username)}
-                  className="clip-arena inline-flex max-w-full min-w-0 items-center overflow-hidden border border-[#9AFF00] bg-[#9AFF00]/15 px-3 py-2 text-xs text-[#9AFF00] disabled:cursor-not-allowed disabled:opacity-70"
-                >
-                  <span className="min-w-0 truncate">@{username}</span>
-                </button>
-              )) : <p className="min-w-0 truncate text-sm text-zinc-500">No first solver selected.</p>}
+              {selectedProblem.firstSolveStatus === "ASSIGNED" && selectedProblem.firstSolveUsername ? (
+                <span className="clip-arena inline-flex max-w-full min-w-0 items-center overflow-hidden border border-[#9AFF00] bg-[#9AFF00]/15 px-3 py-2 text-xs text-[#9AFF00]">
+                  <span className="min-w-0 truncate">@{selectedProblem.firstSolveUsername}</span>
+                </span>
+              ) : selectedProblem.firstSolveStatus === "UNSOLVED" ? (
+                <span className="clip-arena inline-flex max-w-full min-w-0 items-center overflow-hidden border border-[#F3C55B] bg-[#F3C55B]/15 px-3 py-2 text-xs text-[#F3C55B]">UNSOLVED</span>
+              ) : <p className="min-w-0 truncate text-sm text-zinc-500">Clear / None</p>}
             </div>
           </div>
 
@@ -969,7 +981,8 @@ function finalizeStandings(id: string, problems: ProblemDraft[], submitJson: Sub
           code: problem.code.trim(),
           title: problem.title.trim(),
           points: problem.points,
-          firstSolveUsernames: problem.firstSolveUsernames,
+          firstSolveStatus: problem.firstSolveStatus,
+          firstSolveUsername: problem.firstSolveUsername,
         }));
       const response = await submitJson<FinalizeStandingsResponse>(`/api/admin/contests/${id}/entries`, { action: "finalize", problems: payloadProblems }, "PATCH");
       await refreshContests(id);
@@ -989,7 +1002,8 @@ function saveProblems(id: string, problems: ProblemDraft[], submitJson: SubmitJs
           code: problem.code.trim(),
           title: problem.title.trim(),
           points: problem.points,
-          firstSolveUsernames: problem.firstSolveUsernames,
+          firstSolveStatus: problem.firstSolveStatus,
+          firstSolveUsername: problem.firstSolveUsername,
         }));
       await submitJson(`/api/admin/contests/${id}/entries`, { action: "saveProblems", problems: payloadProblems }, "PATCH");
       await refreshContests(id);
@@ -1063,7 +1077,7 @@ function setProblemCount(count: number, problems: ProblemDraft[], setProblems: (
     ...problems,
     ...Array.from({ length: nextCount - problems.length }, (_, index) => {
       const problemIndex = problems.length + index;
-      return { code: nextProblemCode(problemIndex), title: "", points: (problemIndex + 1) * 100, firstSolveUsernames: [] };
+      return { code: nextProblemCode(problemIndex), title: "", points: (problemIndex + 1) * 100, firstSolveUsername: "", firstSolveStatus: "NONE" as const };
     }),
   ]);
 }

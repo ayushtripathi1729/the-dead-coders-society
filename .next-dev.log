@@ -77,3 +77,18 @@ prisma:error Error in PostgreSQL connection: Error { kind: Db, cause: Some(DbErr
  GET /controlroomadmin 200 in 198ms
  GET /controlroomadmin 200 in 209ms
  GET /controlroomadmin 200 in 248ms
+ ✓ Compiled in 1295ms (696 modules)
+ ✓ Compiled in 337ms (696 modules)
+ ✓ Compiled in 375ms (696 modules)
+ ✓ Compiled in 318ms (696 modules)
+ ✓ Compiled in 1760ms (1730 modules)
+ ✓ Compiled in 299ms (696 modules)
+ ✓ Compiled in 343ms (696 modules)
+ ✓ Compiled in 1286ms (1730 modules)
+ ✓ Compiled in 979ms (1730 modules)
+ ✓ Compiled in 805ms (1730 modules)
+ ✓ Compiled in 351ms (696 modules)
+ ✓ Compiled in 252ms (696 modules)
+ ✓ Compiled in 266ms (696 modules)
+ ✓ Compiled in 354ms (696 modules)
+[?25h

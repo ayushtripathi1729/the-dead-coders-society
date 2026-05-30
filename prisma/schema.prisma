@@ -30,6 +30,11 @@ enum CertificateType {
   CONTEST
 }
 
+enum FirstSolveStatus {
+  ASSIGNED
+  UNSOLVED
+}
+
 model Admin {
   id           String        @id @default(cuid())
   email        String        @unique
@@ -134,12 +139,13 @@ model ContestProblem {
 model FirstSolve {
   id             String         @id @default(cuid())
   problemId      String
-  playerUsername String
+  playerUsername String?
+  status         FirstSolveStatus @default(ASSIGNED)
   createdAt      DateTime       @default(now())
   problem        ContestProblem @relation(fields: [problemId], references: [id], onDelete: Cascade)
-  player         Player         @relation(fields: [playerUsername], references: [username], onDelete: Cascade)
+  player         Player?        @relation(fields: [playerUsername], references: [username], onDelete: Cascade)
 
-  @@unique([problemId, playerUsername])
+  @@unique([problemId])
   @@index([playerUsername, createdAt])
 }
 
