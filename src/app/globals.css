@@ -479,6 +479,7 @@ html {
 
 .ledger-row {
   display: flex;
+  min-width: 0;
   align-items: center;
   gap: .8rem;
   border: 1px solid rgba(192,192,192,.12);
@@ -486,6 +487,16 @@ html {
   padding: .9rem 1rem;
   font-family: var(--font-mono);
   transition: border-color .2s ease, background .2s ease, transform .2s ease;
+}
+
+.ledger-row > * {
+  min-width: 0;
+}
+
+.ledger-row span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .ledger-row:hover {
@@ -513,7 +524,9 @@ html {
 
 .upload-action-button {
   display: inline-flex;
-  min-height: 2.5rem;
+  height: 2.75rem;
+  max-width: 100%;
+  min-width: 0;
   align-items: center;
   justify-content: center;
   gap: .45rem;
@@ -525,7 +538,20 @@ html {
   font-size: .68rem;
   letter-spacing: .16em;
   text-transform: uppercase;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   transition: border-color .2s ease, box-shadow .2s ease, color .2s ease;
+}
+
+.upload-action-button svg {
+  flex-shrink: 0;
+}
+
+.upload-action-button span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .upload-action-button:hover {
@@ -564,6 +590,7 @@ html {
 .control-room-nav-item {
   display: flex;
   min-width: 0;
+  overflow: hidden;
   align-items: center;
   justify-content: center;
   gap: .65rem;
@@ -576,6 +603,13 @@ html {
   transition: border-color .2s ease, background .2s ease, color .2s ease, transform .2s ease;
 }
 
+.control-room-nav-item span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .control-room-nav-item:hover {
   border-color: rgba(154,255,0,.54);
   background: rgba(154,255,0,.08);
@@ -585,8 +619,10 @@ html {
 
 .control-room-dashboard {
   display: grid;
+  align-items: stretch;
   gap: 1.25rem;
   min-width: 0;
+  width: 100%;
 }
 
 .control-room-row-two {
@@ -609,10 +645,19 @@ html {
 .control-room-standings-card,
 .control-room-equal-card {
   display: flex;
-  min-height: 100%;
+  min-height: 34rem;
   min-width: 0;
   overflow: hidden;
   flex-direction: column;
+}
+
+.control-room-setup-card {
+  min-height: 0;
+}
+
+.control-room-standings-card,
+.control-room-equal-card {
+  padding: 1.25rem;
 }
 
 .admin-contest-form {
@@ -624,7 +669,7 @@ html {
 
 .admin-field-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(180px, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 1rem;
   min-width: 0;
 }
@@ -645,11 +690,18 @@ html {
   background: rgba(0,0,0,.8);
   padding: 1rem;
   backdrop-filter: blur(12px);
+  min-width: 0;
+}
+
+.admin-form-actions > * {
+  min-width: min(100%, 11rem);
 }
 
 .terminal-field {
   min-height: 3rem;
+  max-width: 100%;
   width: 100%;
+  min-width: 0;
 }
 
 textarea.terminal-field {
@@ -658,14 +710,19 @@ textarea.terminal-field {
 
 .standings-entry-form {
   display: grid;
-  grid-template-columns: minmax(180px, 1.2fr) minmax(150px, .9fr) minmax(120px, .55fr) minmax(120px, .55fr) auto;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: .75rem;
   min-width: 0;
+}
+
+.standings-entry-form button {
+  width: 100%;
 }
 
 .standings-table-wrap {
   max-height: 34rem;
   min-width: 0;
+  max-width: 100%;
   overflow: auto;
   border: 1px solid rgba(154,255,0,.16);
   background: rgba(0,0,0,.35);
@@ -705,9 +762,15 @@ textarea.terminal-field {
 }
 
 .standings-edit-table .terminal-field {
-  min-width: 8rem;
+  min-width: 7rem;
   min-height: 2.5rem;
   padding-block: .55rem;
+}
+
+.standings-edit-table td:nth-child(6) {
+  max-width: 12rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .certificate-frame > * {
@@ -720,16 +783,8 @@ textarea.terminal-field {
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   }
 
-  .control-room-standings-card {
-    grid-column: 1 / -1;
-  }
-
-  .standings-entry-form {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
   .admin-field-grid {
-    grid-template-columns: repeat(3, minmax(180px, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
   .control-room-sidebar nav {
@@ -767,6 +822,7 @@ textarea.terminal-field {
 
   .admin-form-actions > * {
     width: 100%;
+    min-width: 0;
   }
 
   .standings-entry-form {

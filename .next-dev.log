@@ -1,0 +1,38 @@
+
+> dead-coders-society@0.1.0 dev
+> next dev --hostname 127.0.0.1 --port 3000
+
+   ▲ Next.js 15.5.18
+   - Local:        http://127.0.0.1:3000
+   - Network:      http://127.0.0.1:3000
+   - Environments: .env
+
+ ✓ Starting...
+ ✓ Ready in 4.1s
+ ○ Compiling /middleware ...
+ ✓ Compiled /middleware in 923ms (177 modules)
+ ○ Compiling /controlroomadmin ...
+ ✓ Compiled /controlroomadmin in 11.2s (1728 modules)
+ GET /controlroomadmin 200 in 245ms
+ GET /controlroomadmin 200 in 4320ms
+ GET /controlroomadmin 200 in 1537ms
+ ✓ Compiled in 945ms (695 modules)
+ GET /controlroomadmin 200 in 1549ms
+ ✓ Compiled in 819ms (695 modules)
+ GET /controlroomadmin 200 in 1612ms
+ ✓ Compiled in 453ms (695 modules)
+ ✓ Compiled in 1502ms (1728 modules)
+ GET /controlroomadmin 200 in 2677ms
+ ✓ Compiled in 579ms (695 modules)
+ ✓ Compiled in 468ms (695 modules)
+ GET /controlroomadmin 200 in 1824ms
+ ✓ Compiled in 398ms (695 modules)
+ GET /controlroomadmin 200 in 1512ms
+ ✓ Compiled in 594ms (695 modules)
+ ✓ Compiled in 1569ms (1728 modules)
+ GET /controlroomadmin 200 in 2258ms
+ ✓ Compiled in 682ms (695 modules)
+ GET /controlroomadmin 200 in 1529ms
+ ✓ Compiled in 456ms (695 modules)
+ GET /controlroomadmin 200 in 1679ms
+ ✓ Compiled in 496ms (695 modules)

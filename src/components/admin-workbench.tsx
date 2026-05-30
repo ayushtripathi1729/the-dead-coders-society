@@ -3,7 +3,7 @@
 import Image from "next/image";
 import type { ChangeEvent, DragEvent, FormEvent, ReactNode } from "react";
 import { useEffect, useMemo, useState, useTransition } from "react";
-import { Activity, ArrowDown, ArrowUp, Copy, Crown, Database, FilePenLine, ImagePlus, ListChecks, Plus, RadioTower, Save, Trash2, Upload, Users, X, Zap } from "lucide-react";
+import { Activity, Copy, Crown, Database, FilePenLine, ImagePlus, ListChecks, Plus, RadioTower, Save, Trash2, Upload, Users, X, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { ContestEntryView, ContestView } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -162,13 +162,13 @@ export function AdminWorkbench({ contests, activityLogs }: { contests: ContestVi
   }
 
   return (
-    <div className="admin-shell grid gap-5">
-      {message && <div className="empty-plaque clip-arena p-4 font-[family-name:var(--font-mono)] text-[#9AFF00]">{message}</div>}
+    <div className="admin-shell grid min-w-0 gap-5">
+      {message && <div className="empty-plaque clip-arena min-w-0 overflow-hidden break-words p-4 font-[family-name:var(--font-mono)] text-[#9AFF00]">{message}</div>}
       <div className="control-room-shell">
         <aside className="control-room-sidebar section-band p-4">
-          <div className="mb-5">
-            <p className="engraved text-[10px]">Admin Matrix</p>
-            <p className="mt-2 font-[family-name:var(--font-display)] text-lg uppercase text-white">Control Room</p>
+          <div className="mb-5 min-w-0">
+            <p className="engraved truncate text-[10px]">Admin Matrix</p>
+            <p className="mt-2 truncate whitespace-nowrap font-[family-name:var(--font-display)] text-lg uppercase text-white">Control Room</p>
           </div>
           <nav className="grid gap-2 text-sm">
             {[
@@ -179,7 +179,7 @@ export function AdminWorkbench({ contests, activityLogs }: { contests: ContestVi
               ["Actions", Zap],
               ["Activity", Activity],
             ].map(([label, Icon]) => (
-              <a key={String(label)} href={`#${String(label).toLowerCase()}`} className="control-room-nav-item">
+              <a key={String(label)} href={`#${String(label).toLowerCase()}`} className="control-room-nav-item [&_svg]:shrink-0">
                 <Icon className="size-4" />
                 <span>{String(label)}</span>
               </a>
@@ -187,8 +187,8 @@ export function AdminWorkbench({ contests, activityLogs }: { contests: ContestVi
           </nav>
         </aside>
 
-        <div className="control-room-dashboard">
-          <Panel id="contest" className="control-room-setup-card" icon={<Plus className="size-6" />} title={activeContest ? "Contest Editor" : "Create Contest"}>
+        <div className="control-room-dashboard grid-cols-1 md:grid-cols-2 xl:grid-cols-3">
+          <Panel id="contest" className="control-room-setup-card md:col-span-2 xl:col-span-3" icon={<Plus className="size-6" />} title={activeContest ? "Contest Editor" : "Create Contest"}>
             <form key={`${activeContest?.id ?? "new"}-${isEditingContest ? "edit" : "view"}`} className="admin-contest-form" onSubmit={(event) => persistContest(event, activeContest?.id)}>
               {activeContest && !isEditingContest && (
                 <div className="empty-plaque clip-arena p-3 font-[family-name:var(--font-mono)] text-sm text-zinc-300">
@@ -209,7 +209,7 @@ export function AdminWorkbench({ contests, activityLogs }: { contests: ContestVi
                 <Field name="startTime" type="datetime-local" defaultValue={toLocalInput(activeContest?.startTime)} disabled={Boolean(activeContest && !isEditingContest)} required />
                 <Field name="duration" type="number" min={1} placeholder="Duration" defaultValue={activeContest?.duration ?? 120} disabled={Boolean(activeContest && !isEditingContest)} />
                 <Field type="number" min={1} max={26} placeholder="Number of problems" value={problems.length} disabled={Boolean(activeContest && (!isEditingContest || activeContest.standingsFinalizedAt))} onChange={(event) => setProblemCount(Number(event.target.value), problems, setProblems)} />
-                <select name="visibility" className="terminal-field clip-arena min-w-0 px-4 py-3 font-[family-name:var(--font-mono)] text-sm" defaultValue={activeContest?.visibility ?? "PUBLIC"} disabled={Boolean(activeContest && !isEditingContest)}>
+                <select name="visibility" className="terminal-field clip-arena min-w-0 truncate px-4 py-3 font-[family-name:var(--font-mono)] text-sm" defaultValue={activeContest?.visibility ?? "PUBLIC"} disabled={Boolean(activeContest && !isEditingContest)}>
                   <option value="PUBLIC">Public</option>
                   <option value="PRIVATE">Private</option>
                   <option value="ARCHIVED">Archived</option>
@@ -220,7 +220,7 @@ export function AdminWorkbench({ contests, activityLogs }: { contests: ContestVi
 
               <ContestProblemSetup problems={problems} setProblems={setProblems} disabled={Boolean(activeContest && (!isEditingContest || activeContest.standingsFinalizedAt))} />
 
-              <textarea name="description" placeholder="Contest description" rows={4} defaultValue={activeContest?.description} disabled={Boolean(activeContest && !isEditingContest)} className="terminal-field clip-arena min-w-0 resize-y px-4 py-3 font-[family-name:var(--font-mono)] text-sm" />
+              <textarea name="description" placeholder="Contest description" rows={4} defaultValue={activeContest?.description} disabled={Boolean(activeContest && !isEditingContest)} className="terminal-field clip-arena min-w-0 resize-y overflow-hidden px-4 py-3 font-[family-name:var(--font-mono)] text-sm" />
 
               <CoordinatorEditor coordinators={coordinators} setCoordinators={setCoordinators} disabled={Boolean(activeContest && !isEditingContest)} />
 
@@ -246,8 +246,7 @@ export function AdminWorkbench({ contests, activityLogs }: { contests: ContestVi
             </form>
           </Panel>
 
-          <div className="control-room-row-two">
-            <Panel id="standings" className="control-room-standings-card" icon={<Upload className="size-6" />} title="Standings Draft Manager">
+          <Panel id="standings" className="control-room-standings-card" icon={<Upload className="size-6" />} title="Standings Draft Manager">
               <ContestSelect contests={contestList} selectedContest={selectedContest} setSelectedContest={(id) => startTransition(async () => {
                 selectContest(id);
                 await refreshContests(id);
@@ -270,7 +269,7 @@ export function AdminWorkbench({ contests, activityLogs }: { contests: ContestVi
                 }}
               >
                 <input type="hidden" name="contestId" value={selectedContest} />
-                <textarea name="standingsText" rows={8} placeholder={"Full Name, username, penalty, solve vector\nAda Lovelace, ada_01, 120, [1,1,0,1,0]"} className="terminal-field clip-arena min-w-0 resize-y px-4 py-3 font-[family-name:var(--font-mono)] text-sm" />
+                <textarea name="standingsText" rows={8} placeholder={"Full Name, username, penalty, solve vector\nAda Lovelace, ada_01, 120, [1,1,0,1,0]"} className="terminal-field clip-arena min-w-0 resize-y overflow-hidden px-4 py-3 font-[family-name:var(--font-mono)] text-sm" />
                 <Button type="submit" disabled={!selectedContest || isPending || Boolean(activeContest?.standingsFinalizedAt)}>{isPending ? "Processing..." : "Save Draft Standings"}</Button>
               </form>
               <form
@@ -294,9 +293,9 @@ export function AdminWorkbench({ contests, activityLogs }: { contests: ContestVi
               </form>
 
               <div className="mt-5 border-t border-white/10 pt-5">
-                <div className="flex items-center gap-3 text-[#9AFF00]">
-                  <Users className="size-5" />
-                  <h3 className="font-[family-name:var(--font-display)] text-sm uppercase tracking-[0.18em] text-white">Participant Standings</h3>
+                <div className="flex min-w-0 items-center gap-3 text-[#9AFF00]">
+                  <Users className="size-5 shrink-0" />
+                  <h3 className="min-w-0 truncate whitespace-nowrap font-[family-name:var(--font-display)] text-sm uppercase tracking-[0.18em] text-white">Participant Standings</h3>
                 </div>
                 {activeContest ? <EntryEditor contestId={activeContest.id} finalized={Boolean(activeContest.standingsFinalizedAt)} entries={activeContest.entries} submitJson={submitJson} setMessage={setMessage} startTransition={startTransition} refreshContests={refreshContests} isPending={isPending} /> : <div className="mt-4"><Empty>No active contest selected.</Empty></div>}
                 {activeContest && (
@@ -310,11 +309,11 @@ export function AdminWorkbench({ contests, activityLogs }: { contests: ContestVi
                   </Button>
                 )}
               </div>
-            </Panel>
+          </Panel>
 
-            <Panel id="overview" className="control-room-equal-card" icon={<Database className="size-6" />} title="Contest Overview">
+          <Panel id="overview" className="control-room-equal-card" icon={<Database className="size-6" />} title="Contest Overview">
               <ContestSelect contests={contestList} selectedContest={selectedContest} setSelectedContest={selectContest} />
-              <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <div className="mt-4 grid gap-3 lg:grid-cols-2">
                 <Operation label="Entries" value={activeContest?.entries.length ?? 0} />
                 <Operation label="Status" value={activeContest?.status ?? "N/A"} />
                 <Operation label="Starts" value={activeContest ? formatDateUTC(activeContest.startTime) : "N/A"} />
@@ -322,35 +321,33 @@ export function AdminWorkbench({ contests, activityLogs }: { contests: ContestVi
                 <Operation label="Finalized" value={activeContest?.standingsFinalizedAt ? "YES" : "NO"} />
                 <Operation label="Last updated" value={activeContest ? formatDateUTC(activeContest.updatedAt) : "N/A"} />
               </div>
-            </Panel>
+          </Panel>
 
-            <Panel id="problems" className="control-room-equal-card" icon={<ListChecks className="size-6" />} title="Problems & First Solves">
+          <Panel id="problems" className="control-room-equal-card" icon={<ListChecks className="size-6" />} title="Problems & First Solves">
               {activeContest ? (
                 <div className="mt-4 grid gap-4">
-                  <ProblemEditor problems={problems} entries={activeContest.entries} setProblems={setProblems} finalized={Boolean(activeContest.standingsFinalizedAt)} />
-                  <Button
-                    type="button"
-                    disabled={isPending || Boolean(activeContest.standingsFinalizedAt)}
-                    onClick={() => saveProblems(activeContest.id, problems, submitJson, setMessage, startTransition, refreshContests)}
-                  >
-                    <Save className="size-4" /> Save Problems & First Solves
-                  </Button>
+                  <ProblemEditor
+                    problems={problems}
+                    entries={activeContest.entries}
+                    setProblems={setProblems}
+                    finalized={Boolean(activeContest.standingsFinalizedAt)}
+                    isPending={isPending}
+                    onSave={() => saveProblems(activeContest.id, problems, submitJson, setMessage, startTransition, refreshContests)}
+                  />
                 </div>
               ) : <Empty>Select a contest to manage first solves.</Empty>}
-            </Panel>
-          </div>
+          </Panel>
 
-          <div className="control-room-row-three">
-            <Panel id="actions" className="control-room-equal-card" icon={<Zap className="size-6" />} title="Quick Actions">
+          <Panel id="actions" className="control-room-equal-card" icon={<Zap className="size-6" />} title="Quick Actions">
               <div className="mt-4 grid gap-3">
                 <Button type="button" disabled={!activeContest || isPending} onClick={() => updateContestVisibility(activeContest, "PUBLIC", submitJson, setMessage, startTransition, refreshContests)}><Upload className="size-4" /> Publish Contest</Button>
                 <Button type="button" variant="ghost" disabled={!activeContest || isPending} onClick={() => updateContestVisibility(activeContest, "PRIVATE", submitJson, setMessage, startTransition, refreshContests)}><X className="size-4" /> Unpublish Contest</Button>
                 <Button type="button" variant="ghost" disabled={!activeContest || isPending} onClick={() => recalculateContest(activeContest?.id, submitJson, setMessage, startTransition, refreshContests)}><Database className="size-4" /> Recalculate Standings</Button>
                 <Button type="button" variant="danger" disabled={!activeContest || isPending} onClick={() => deleteContest(activeContest?.id, submitJson, setMessage, startTransition, refreshContests)}><Trash2 className="size-4" /> Delete Contest</Button>
               </div>
-            </Panel>
+          </Panel>
 
-            <Panel className="control-room-equal-card" icon={<Crown className="size-6" />} title="Prize Distribution">
+          <Panel className="control-room-equal-card" icon={<Crown className="size-6" />} title="Prize Distribution">
               <div className="mt-4 grid gap-2">
                 {[["1st", 500], ["2nd", 250], ["3rd", 125], ["4th", 50], ["5th", 25]].map(([place, points]) => (
                   <div key={String(place)} className="ledger-row text-sm">
@@ -359,9 +356,9 @@ export function AdminWorkbench({ contests, activityLogs }: { contests: ContestVi
                   </div>
                 ))}
               </div>
-            </Panel>
+          </Panel>
 
-            <Panel id="activity" className="control-room-equal-card" icon={<Activity className="size-6" />} title="Recent Activity Logs">
+          <Panel id="activity" className="control-room-equal-card" icon={<Activity className="size-6" />} title="Recent Activity Logs">
               <div className="mt-4 grid max-h-80 gap-2 overflow-auto pr-1">
                 {activityLogs.length ? activityLogs.map((log) => (
                   <div key={log.id} className="ledger-row text-sm">
@@ -371,8 +368,7 @@ export function AdminWorkbench({ contests, activityLogs }: { contests: ContestVi
                   </div>
                 )) : <Empty>No activity recorded.</Empty>}
               </div>
-            </Panel>
-          </div>
+          </Panel>
         </div>
       </div>
     </div>
@@ -477,14 +473,14 @@ function CloudinaryUploader({ name, title, kind, ratio, contestId, initialUrl, d
   }
 
   return (
-    <div className="clip-arena border border-[#9AFF00]/20 bg-black/45 p-4">
+    <div className="clip-arena min-w-0 overflow-hidden border border-[#9AFF00]/20 bg-black/45 p-4">
       <input type="hidden" name={name} value={url} />
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <p className="font-[family-name:var(--font-display)] text-sm uppercase text-white">{title}</p>
-          <p className="text-xs text-zinc-500">{ratio} / JPG, PNG, WEBP / 8MB max</p>
+      <div className="flex min-w-0 flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0">
+          <p className="truncate whitespace-nowrap font-[family-name:var(--font-display)] text-sm uppercase text-white">{title}</p>
+          <p className="truncate text-xs text-zinc-500">{ratio} / JPG, PNG, WEBP / 8MB max</p>
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex min-w-0 flex-wrap gap-2">
           <label className={`upload-action-button cursor-pointer ${uploading || disabled ? "pointer-events-none opacity-50" : ""}`} title={`${url ? "Replace" : "Upload"} ${title}`}>
             <ImagePlus className="size-4" />
             <span>{url ? "Replace" : "Upload"}</span>
@@ -512,7 +508,7 @@ function CloudinaryUploader({ name, title, kind, ratio, contestId, initialUrl, d
         ) : error || (disabled ? "Click Edit Contest to replace artwork" : "Drop artwork here or use upload")}
       </div>
       {uploading && <div className="mt-3 h-2 overflow-hidden bg-zinc-900"><div className="h-full bg-[#9AFF00]" style={{ width: `${progress}%` }} /></div>}
-      {error && <p className="mt-3 text-sm text-red-200">{error}</p>}
+      {error && <p className="mt-3 min-w-0 break-words text-sm text-red-200">{error}</p>}
     </div>
   );
 }
@@ -524,9 +520,9 @@ function CoordinatorEditor({ coordinators, setCoordinators, disabled = false }: 
   }
 
   return (
-    <div className="grid gap-3 border border-[#9AFF00]/15 bg-black/30 p-3">
-      <div className="flex items-center justify-between gap-3">
-        <p className="font-[family-name:var(--font-display)] text-sm uppercase text-white">Coordinator Editor</p>
+    <div className="grid min-w-0 gap-3 overflow-hidden border border-[#9AFF00]/15 bg-black/30 p-3">
+      <div className="flex min-w-0 items-center justify-between gap-3">
+        <p className="min-w-0 truncate whitespace-nowrap font-[family-name:var(--font-display)] text-sm uppercase text-white">Coordinator Editor</p>
         <Button type="button" variant="ghost" disabled={disabled} onClick={() => setCoordinators([...coordinators, { name: "", role: "", email: "", phone: "", discord: "" }])}><Plus className="size-4" /> Add</Button>
       </div>
       {coordinators.map((coordinator, index) => (
@@ -536,7 +532,7 @@ function CoordinatorEditor({ coordinators, setCoordinators, disabled = false }: 
           <Field type="email" placeholder="Email (optional)" value={coordinator.email} disabled={disabled} onChange={(event) => update(index, "email", event.target.value)} />
           <Field placeholder="Phone" value={coordinator.phone} disabled={disabled} onChange={(event) => update(index, "phone", event.target.value)} />
           <Field placeholder="Discord" value={coordinator.discord} disabled={disabled} onChange={(event) => update(index, "discord", event.target.value)} />
-          <Button type="button" variant="ghost" disabled={disabled} className="h-10 px-3" onClick={() => setCoordinators(coordinators.filter((_, itemIndex) => itemIndex !== index))}><Trash2 className="size-4" /></Button>
+          <Button type="button" variant="ghost" disabled={disabled} className="w-11 px-0" onClick={() => setCoordinators(coordinators.filter((_, itemIndex) => itemIndex !== index))}><Trash2 className="size-4" /></Button>
         </div>
       ))}
     </div>
@@ -547,14 +543,14 @@ function ContestProblemSetup({ problems, setProblems, disabled }: { problems: Pr
   const totalPoints = problems.reduce((sum, problem) => sum + problem.points, 0);
 
   return (
-    <div className="grid gap-3 border border-[#9AFF00]/15 bg-black/30 p-3">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="font-[family-name:var(--font-display)] text-sm uppercase text-white">Contest Problems</p>
-        <p className="font-[family-name:var(--font-display)] text-[#9AFF00]">Total Contest Points: {totalPoints}</p>
+    <div className="grid min-w-0 gap-3 overflow-hidden border border-[#9AFF00]/15 bg-black/30 p-3">
+      <div className="flex min-w-0 flex-wrap items-center justify-between gap-3">
+        <p className="min-w-0 truncate whitespace-nowrap font-[family-name:var(--font-display)] text-sm uppercase text-white">Contest Problems</p>
+        <p className="min-w-0 truncate whitespace-nowrap font-[family-name:var(--font-display)] text-[#9AFF00]">Total Contest Points: {totalPoints}</p>
       </div>
-      <div className="grid gap-2">
+      <div className="grid min-w-0 gap-2">
         {problems.map((problem, index) => (
-          <div key={`${problem.code}-${index}`} className="grid gap-2 sm:grid-cols-[100px_1fr]">
+          <div key={`${problem.code}-${index}`} className="grid min-w-0 gap-2 sm:grid-cols-[minmax(0,100px)_minmax(0,1fr)]">
             <Field value={`Problem ${problem.code}`} disabled />
             <Field
               type="number"
@@ -571,10 +567,27 @@ function ContestProblemSetup({ problems, setProblems, disabled }: { problems: Pr
   );
 }
 
-function ProblemEditor({ problems, entries, setProblems, finalized }: { problems: ProblemDraft[]; entries: ContestEntryView[]; setProblems: (problems: ProblemDraft[]) => void; finalized: boolean }) {
-  const [solverSearch, setSolverSearch] = useState<Record<number, string>>({});
+function ProblemEditor({
+  problems,
+  entries,
+  setProblems,
+  finalized,
+  isPending,
+  onSave,
+}: {
+  problems: ProblemDraft[];
+  entries: ContestEntryView[];
+  setProblems: (problems: ProblemDraft[]) => void;
+  finalized: boolean;
+  isPending: boolean;
+  onSave: () => void;
+}) {
+  const [selectedProblemIndex, setSelectedProblemIndex] = useState(0);
+  const [solverSearch, setSolverSearch] = useState("");
+  const selectedIndex = Math.min(selectedProblemIndex, Math.max(0, problems.length - 1));
+  const selectedProblem = problems[selectedIndex];
 
-  function update(index: number, field: "code" | "title" | "points", value: string) {
+  function update(index: number, field: "code" | "points", value: string) {
     setProblems(problems.map((problem, itemIndex) => itemIndex === index ? { ...problem, [field]: field === "points" ? Number(value) : value } : problem));
   }
 
@@ -589,85 +602,121 @@ function ProblemEditor({ problems, entries, setProblems, finalized }: { problems
       selected.add(participant.username);
       return { ...problem, firstSolveUsernames: [...selected] };
     }));
-    setSolverSearch((current) => ({ ...current, [index]: "" }));
+    setSolverSearch("");
   }
 
   function removeFirstSolver(index: number, username: string) {
     setProblems(problems.map((problem, itemIndex) => itemIndex === index ? { ...problem, firstSolveUsernames: problem.firstSolveUsernames.filter((item) => item !== username) } : problem));
   }
 
-  function moveProblem(index: number, direction: -1 | 1) {
-    const nextIndex = index + direction;
-    if (nextIndex < 0 || nextIndex >= problems.length) return;
-    const next = [...problems];
-    [next[index], next[nextIndex]] = [next[nextIndex], next[index]];
-    setProblems(next);
+  function addProblem() {
+    const nextProblem = { code: nextProblemCode(problems.length), title: "", points: (problems.length + 1) * 100, firstSolveUsernames: [] };
+    setProblems([...problems, nextProblem]);
+    setSelectedProblemIndex(problems.length);
+  }
+
+  function removeSelectedProblem() {
+    if (problems.length === 1) return;
+    const nextProblems = problems.filter((_, itemIndex) => itemIndex !== selectedIndex);
+    setProblems(nextProblems);
+    setSelectedProblemIndex(Math.min(selectedIndex, nextProblems.length - 1));
+    setSolverSearch("");
   }
 
   return (
-    <div className="grid gap-3">
-      <div className="flex items-center justify-between gap-3">
-        <p className="font-[family-name:var(--font-display)] text-sm uppercase text-white">Problem List & First Solves</p>
-        <Button type="button" variant="ghost" disabled={finalized || problems.length >= 26} onClick={() => setProblems([...problems, { code: nextProblemCode(problems.length), title: "", points: (problems.length + 1) * 100, firstSolveUsernames: [] }])}><Plus className="size-4" /> Add Problem</Button>
+    <div className="grid min-w-0 gap-4">
+      <div className="grid min-w-0 gap-3 sm:grid-cols-[minmax(0,1fr)_auto]">
+        <label className="grid min-w-0 gap-2">
+          <span className="text-[10px] uppercase tracking-[0.18em] text-zinc-500">Problem</span>
+          <select
+            value={selectedIndex}
+            onChange={(event) => {
+              setSelectedProblemIndex(Number(event.target.value));
+              setSolverSearch("");
+            }}
+            className="terminal-field clip-arena min-w-0 truncate px-4 py-3 font-[family-name:var(--font-mono)] text-sm"
+          >
+            {problems.map((problem, index) => (
+              <option key={`${problem.code}-${index}`} value={index}>
+                {problem.code || nextProblemCode(index)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <div className="flex min-w-0 flex-wrap items-end gap-2 sm:justify-end">
+          <Button type="button" variant="ghost" disabled={finalized || problems.length >= 26} className="w-full sm:w-auto" onClick={addProblem}><Plus className="size-4" /> Add Problem</Button>
+          <Button type="button" variant="ghost" disabled={finalized || problems.length === 1} className="w-full px-3 sm:w-11 sm:px-0" onClick={removeSelectedProblem} aria-label="Delete selected problem"><Trash2 className="size-4" /></Button>
+        </div>
       </div>
-      {problems.map((problem, index) => (
-        <div key={index} className="grid gap-3 border border-white/10 bg-black/35 p-3">
-          <div className="grid gap-2 sm:grid-cols-[80px_120px_1fr_auto]">
-            <Field placeholder="A" value={problem.code} disabled={finalized} onChange={(event) => update(index, "code", event.target.value)} />
-            <Field type="number" min={1} placeholder="Points" value={problem.points} disabled={finalized} onChange={(event) => update(index, "points", event.target.value)} />
-            <Field placeholder="Problem title" value={problem.title} disabled={finalized} onChange={(event) => update(index, "title", event.target.value)} />
-            <div className="flex gap-2">
-              <Button type="button" variant="ghost" disabled={finalized || index === 0} className="h-10 px-3" onClick={() => moveProblem(index, -1)}><ArrowUp className="size-4" /></Button>
-              <Button type="button" variant="ghost" disabled={finalized || index === problems.length - 1} className="h-10 px-3" onClick={() => moveProblem(index, 1)}><ArrowDown className="size-4" /></Button>
-              <Button type="button" variant="ghost" disabled={finalized || problems.length === 1} className="h-10 px-3" onClick={() => setProblems(problems.filter((_, itemIndex) => itemIndex !== index))}><Trash2 className="size-4" /></Button>
-            </div>
+
+      {selectedProblem && (
+        <div className="grid min-w-0 gap-4 overflow-hidden border border-white/10 bg-black/35 p-4">
+          <div className="grid min-w-0 gap-3 sm:grid-cols-[minmax(0,.8fr)_minmax(0,1fr)]">
+            <label className="grid min-w-0 gap-2">
+              <span className="text-[10px] uppercase tracking-[0.18em] text-zinc-500">Problem Code</span>
+              <Field placeholder="A" value={selectedProblem.code} disabled={finalized} onChange={(event) => update(selectedIndex, "code", event.target.value)} />
+            </label>
+            <label className="grid min-w-0 gap-2">
+              <span className="text-[10px] uppercase tracking-[0.18em] text-zinc-500">Problem Points</span>
+              <Field type="number" min={1} placeholder="Points" value={selectedProblem.points} disabled={finalized} onChange={(event) => update(selectedIndex, "points", event.target.value)} />
+            </label>
           </div>
-          <div className="grid gap-2">
-            <p className="text-[10px] uppercase tracking-[0.18em] text-zinc-500">First solver(s)</p>
-            <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
+
+          <div className="grid min-w-0 gap-2">
+            <p className="text-[10px] uppercase tracking-[0.18em] text-zinc-500">First Solver Assignment</p>
+            <div className="grid min-w-0 gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
               <Field
-                list={`first-solver-options-${index}`}
-                placeholder={entries.length ? "Search contest username" : "Add participants first"}
+                list="first-solver-options"
+                placeholder={entries.length ? "Search participant username" : "Add participants first"}
                 disabled={finalized || !entries.length}
-                value={solverSearch[index] ?? ""}
-                onChange={(event) => setSolverSearch((current) => ({ ...current, [index]: event.target.value }))}
+                value={solverSearch}
+                onChange={(event) => setSolverSearch(event.target.value)}
                 onKeyDown={(event) => {
                   if (event.key === "Enter") {
                     event.preventDefault();
-                    addFirstSolver(index, solverSearch[index] ?? "");
+                    addFirstSolver(selectedIndex, solverSearch);
                   }
                 }}
               />
-              <datalist id={`first-solver-options-${index}`}>
+              <datalist id="first-solver-options">
                 {entries
-                  .filter((entry) => !problem.firstSolveUsernames.includes(entry.username))
+                  .filter((entry) => !selectedProblem.firstSolveUsernames.includes(entry.username))
                   .map((entry) => <option key={entry.username} value={`@${entry.username}`} />)}
               </datalist>
-              <Button type="button" variant="ghost" disabled={finalized || !entries.length} onClick={() => addFirstSolver(index, solverSearch[index] ?? "")}>Assign</Button>
+              <Button type="button" variant="ghost" disabled={finalized || !entries.length} className="w-full sm:w-auto" onClick={() => addFirstSolver(selectedIndex, solverSearch)}>Assign</Button>
             </div>
-            <div className="flex max-h-28 flex-wrap gap-2 overflow-auto pr-1">
-              {problem.firstSolveUsernames.length ? problem.firstSolveUsernames.map((username) => (
+          </div>
+
+          <div className="grid min-w-0 gap-2">
+            <p className="text-[10px] uppercase tracking-[0.18em] text-zinc-500">Assigned Solvers List</p>
+            <div className="flex max-h-28 min-w-0 flex-wrap gap-2 overflow-auto pr-1">
+              {selectedProblem.firstSolveUsernames.length ? selectedProblem.firstSolveUsernames.map((username) => (
                 <button
                   key={username}
                   type="button"
                   disabled={finalized}
-                  onClick={() => removeFirstSolver(index, username)}
-                  className="clip-arena border border-[#9AFF00] bg-[#9AFF00]/15 px-3 py-2 text-xs text-[#9AFF00] disabled:cursor-not-allowed disabled:opacity-70"
+                  title={`Remove @${username}`}
+                  onClick={() => removeFirstSolver(selectedIndex, username)}
+                  className="clip-arena inline-flex max-w-full min-w-0 items-center overflow-hidden border border-[#9AFF00] bg-[#9AFF00]/15 px-3 py-2 text-xs text-[#9AFF00] disabled:cursor-not-allowed disabled:opacity-70"
                 >
-                  @{username}
+                  <span className="min-w-0 truncate">@{username}</span>
                 </button>
-              )) : <p className="text-sm text-zinc-500">No first solver selected.</p>}
+              )) : <p className="min-w-0 truncate text-sm text-zinc-500">No first solver selected.</p>}
             </div>
           </div>
+
+          <Button type="button" disabled={isPending || finalized} className="w-full" onClick={onSave}>
+            <Save className="size-4" /> Save Problem
+          </Button>
         </div>
-      ))}
+      )}
     </div>
   );
 }
 
 function EntryEditor({ contestId, finalized, entries, submitJson, setMessage, startTransition, refreshContests, isPending }: { contestId: string; finalized: boolean; entries: ContestEntryView[]; submitJson: SubmitJson; setMessage: (message: string) => void; startTransition: (callback: () => void) => void; refreshContests: (id?: string) => Promise<void>; isPending: boolean }) {
   return (
-    <div className="mt-4 grid gap-3">
+    <div className="mt-4 grid min-w-0 gap-3">
       <form
         className="standings-entry-form"
         onSubmit={(event) => {
@@ -754,8 +803,8 @@ function EntryRow({ contestId, finalized, entry, submitJson, setMessage, startTr
       <td className="font-[family-name:var(--font-display)] text-[#9AFF00]">{entry.finalScore}</td>
       <td>
         <div className="flex gap-2">
-          <Button type="button" disabled={isPending || finalized} className="h-10 px-3" onClick={saveRow}><FilePenLine className="size-4" /></Button>
-          <Button type="button" className="h-10 px-3" variant="ghost" onClick={() => startTransition(async () => {
+          <Button type="button" disabled={isPending || finalized} className="w-11 px-0" onClick={saveRow}><FilePenLine className="size-4" /></Button>
+          <Button type="button" className="w-11 px-0" variant="ghost" onClick={() => startTransition(async () => {
           try {
             await submitJson(`/api/admin/contests/${contestId}/entries`, { standingId: entry.id }, "DELETE");
             await refreshContests(contestId);
@@ -772,20 +821,20 @@ function EntryRow({ contestId, finalized, entry, submitJson, setMessage, startTr
 
 function Panel({ icon, title, children, className, id }: { icon: ReactNode; title: string; children: ReactNode; className?: string; id?: string }) {
   return (
-    <section id={id} className={cn("certificate-frame clip-arena p-5", className)}>
-      <div className="flex items-center gap-3 text-[#9AFF00]">{icon}<h2 className="section-rune font-[family-name:var(--font-display)] text-lg uppercase text-white">{title}</h2></div>
+    <section id={id} className={cn("certificate-frame clip-arena min-w-0 overflow-hidden p-5", className)}>
+      <div className="flex min-w-0 items-center gap-2 text-[#9AFF00] sm:gap-3 [&_svg]:shrink-0">{icon}<h2 className="section-rune min-w-0 truncate whitespace-nowrap font-[family-name:var(--font-display)] text-sm uppercase text-white sm:text-base xl:text-lg">{title}</h2></div>
       {children}
     </section>
   );
 }
 
 function Field({ className, ...props }: React.InputHTMLAttributes<HTMLInputElement>) {
-  return <input {...props} autoComplete="off" className={cn("terminal-field clip-arena min-w-0 px-4 py-3 font-[family-name:var(--font-mono)] text-sm", className)} />;
+  return <input {...props} autoComplete="off" className={cn("terminal-field clip-arena min-w-0 truncate px-4 py-3 font-[family-name:var(--font-mono)] text-sm", className)} />;
 }
 
 function ContestSelect({ contests, selectedContest, setSelectedContest, compact = false }: { contests: ContestView[]; selectedContest: string; setSelectedContest: (id: string) => void; compact?: boolean }) {
   return (
-    <select value={selectedContest} onChange={(event) => setSelectedContest(event.target.value)} className={cn("terminal-field clip-arena w-full px-4 py-3 font-[family-name:var(--font-mono)] text-sm", !compact && "mt-5")}>
+    <select value={selectedContest} onChange={(event) => setSelectedContest(event.target.value)} className={cn("terminal-field clip-arena min-w-0 w-full px-4 py-3 font-[family-name:var(--font-mono)] text-sm", !compact && "mt-5")}>
       <option value="">Create a new contest</option>
       {contests.map((contest) => <option key={contest.id} value={contest.id}>{contest.title}</option>)}
     </select>
@@ -793,11 +842,11 @@ function ContestSelect({ contests, selectedContest, setSelectedContest, compact 
 }
 
 function Operation({ label, value }: { label: string; value: ReactNode }) {
-  return <div className="clip-arena border border-[#c0c0c0]/15 bg-black/50 p-3"><p className="text-[10px] uppercase tracking-[0.18em] text-zinc-500">{label}</p><p className="font-[family-name:var(--font-display)] text-xl text-white">{value}</p></div>;
+  return <div className="clip-arena min-w-0 overflow-hidden border border-[#c0c0c0]/15 bg-black/50 p-3"><p className="truncate whitespace-nowrap text-[10px] uppercase tracking-[0.18em] text-zinc-500">{label}</p><p className="min-w-0 truncate whitespace-nowrap font-[family-name:var(--font-display)] text-xl text-white">{value}</p></div>;
 }
 
 function Empty({ children }: { children: ReactNode }) {
-  return <div className="empty-plaque clip-arena p-5 text-center text-zinc-400">{children}</div>;
+  return <div className="empty-plaque clip-arena min-w-0 p-5 text-center text-zinc-400">{children}</div>;
 }
 
 function toLocalInput(value?: string) {
