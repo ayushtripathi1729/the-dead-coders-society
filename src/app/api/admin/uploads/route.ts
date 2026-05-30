@@ -7,7 +7,7 @@ import { deleteFromCloudinary, uploadToCloudinary, type CloudinaryUploadFolder }
 const uploadSchema = z.object({
   kind: z.enum(["POSTER", "INVITE_POSTER", "BANNER", "CERTIFICATE", "PROFILE_IMAGE", "LOGO", "EDITORIAL"]),
   contestId: z.string().optional(),
-  playerId: z.string().optional(),
+  playerUsername: z.string().optional(),
 });
 
 const allowedImageTypes = new Set(["image/jpeg", "image/png", "image/webp"]);
@@ -40,7 +40,7 @@ export async function POST(request: NextRequest) {
     const parsed = uploadSchema.parse({
       kind: formData.get("kind"),
       contestId: formData.get("contestId") || undefined,
-      playerId: formData.get("playerId") || undefined,
+      playerUsername: formData.get("playerUsername") || undefined,
     });
 
     const allowsPdf = parsed.kind === "CERTIFICATE";
@@ -72,7 +72,7 @@ export async function POST(request: NextRequest) {
               url: uploaded.url,
               publicId: uploaded.publicId,
               contestId: parsed.contestId,
-              playerId: parsed.playerId,
+              playerUsername: parsed.playerUsername,
             },
           });
           const replaced = previousUrl
@@ -90,7 +90,7 @@ export async function POST(request: NextRequest) {
               action: "upload.created",
               entity: "UploadAsset",
               entityId: uploadRecord.id,
-              metadata: { kind: parsed.kind, contestId: parsed.contestId ?? null, playerId: parsed.playerId ?? null },
+              metadata: { kind: parsed.kind, contestId: parsed.contestId ?? null, playerUsername: parsed.playerUsername ?? null },
             },
           });
           return { uploadRecord, replacedPublicIds: replaced.map((asset) => asset.publicId).filter(Boolean) as string[] };
@@ -109,7 +109,7 @@ export async function POST(request: NextRequest) {
             url: uploaded.url,
             publicId: uploaded.publicId,
             contestId: parsed.contestId,
-            playerId: parsed.playerId,
+            playerUsername: parsed.playerUsername,
           },
         });
         await prisma.activityLog.create({
@@ -118,7 +118,7 @@ export async function POST(request: NextRequest) {
             action: "upload.created",
             entity: "UploadAsset",
             entityId: record.id,
-            metadata: { kind: parsed.kind, contestId: parsed.contestId ?? null, playerId: parsed.playerId ?? null },
+            metadata: { kind: parsed.kind, contestId: parsed.contestId ?? null, playerUsername: parsed.playerUsername ?? null },
           },
         });
       } catch (error) {

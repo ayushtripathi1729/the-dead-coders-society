@@ -32,11 +32,10 @@ export async function fetchCodeforcesStandings(url: string): Promise<EntryInput[
 
   return payload.result.rows.map((row: CodeforcesStanding) => {
     const username = row.party.members?.map((member) => member.handle).join("+") || "unknown";
-    const solved = row.problemResults?.filter((problem) => problem.points > 0).length ?? 0;
     return {
       username,
       fullName: username,
-      solved,
+      solveVector: row.problemResults?.map((problem) => problem.points > 0 ? 1 : 0) ?? [],
       penalty: row.penalty,
     };
   });

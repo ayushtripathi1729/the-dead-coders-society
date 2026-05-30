@@ -1,4 +1,4 @@
-export type ContestStatus = "UPCOMING" | "LIVE" | "FINISHED";
+export type ContestStatus = "UPCOMING" | "LIVE" | "COMPLETED";
 
 export type ContestEntry = {
   id?: string;
@@ -7,8 +7,11 @@ export type ContestEntry = {
   year?: number;
   rank: number;
   solved: number;
+  solveVector: number[];
+  solvedProblems: string[];
   penalty: number;
   rawScore: number;
+  contestScore: number;
   bonusPoints: number;
   finalScore: number;
   firstSolves: number;
@@ -63,6 +66,7 @@ export type ContestView = Omit<Contest, "bannerPoster" | "entries"> & {
     id: string;
     code: string;
     title: string | null;
+    points: number;
     sortOrder: number;
     firstSolves: {
       id: string;

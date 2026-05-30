@@ -14,7 +14,10 @@ export default async function PlayerPage({ params }: { params: Promise<{ usernam
   const player = await getPlayer(decodeURIComponent(username));
   if (!player) notFound();
 
-  const scoreChart = player.history.slice().reverse().map(({ contest, entry }) => ({ contest: contest.title.slice(0, 14), score: entry.bonusPoints }));
+  const scoreChart = player.history.slice().reverse().reduce<{ contest: string; score: number }[]>((chart, { contest, entry }) => [
+    ...chart,
+    { contest: contest.title.slice(0, 14), score: (chart.at(-1)?.score ?? 0) + entry.finalScore },
+  ], []);
   const ratingChart = player.ratings.length
     ? player.ratings.map((rating, index) => ({ contest: `R${index + 1}`, score: rating.rating }))
     : [{ contest: "Base", score: player.rating }];
@@ -57,7 +60,7 @@ export default async function PlayerPage({ params }: { params: Promise<{ usernam
         <section className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <Metric icon={<Gauge className="size-5" />} label="Contests" value={player.participationCount} />
           <Metric icon={<Zap className="size-5" />} label="Total Solves" value={player.solved} />
-          <Metric icon={<Trophy className="size-5" />} label="Total Score" value={player.totalScore} />
+          <Metric icon={<Trophy className="size-5" />} label="Championship Points" value={player.totalScore} />
           <Metric icon={<Crown className="size-5" />} label="Wins" value={player.wins} />
           <Metric icon={<Flame className="size-5" />} label="Podiums" value={player.podiums} />
           <Metric icon={<BarChart3 className="size-5" />} label="First Solves" value={player.firstSolves} />
@@ -86,17 +89,30 @@ export default async function PlayerPage({ params }: { params: Promise<{ usernam
 
         <section className="section-band mt-6 p-5">
           <h2 className="section-rune font-[family-name:var(--font-display)] text-xl uppercase">Contest History</h2>
-          <div className="mt-5 grid gap-3">
-            {player.history.length ? player.history.map(({ contest, entry }) => (
-              <div key={contest.id} className="ledger-row">
-                <span className="font-[family-name:var(--font-display)] text-white">{contest.title}</span>
-                <span className="text-zinc-500">Rank #{entry.rank}</span>
-                <span className="text-zinc-500">{entry.solved} solved</span>
-                <span className="text-zinc-500">Penalty {entry.penalty}</span>
-                <span className="ml-auto font-[family-name:var(--font-display)] text-[#9AFF00]">{entry.bonusPoints} pts</span>
-              </div>
-            )) : <p className="text-sm text-zinc-500">No contest history recorded yet.</p>}
-          </div>
+          {player.history.length ? (
+            <div className="mt-5 overflow-x-auto">
+              <table className="w-full min-w-[900px] text-left text-sm">
+                <thead className="font-[family-name:var(--font-display)] text-[10px] uppercase tracking-[0.18em] text-zinc-500">
+                  <tr><th className="px-3 py-2">Contest</th><th className="px-3 py-2">Rank</th><th className="px-3 py-2">Solved</th><th className="px-3 py-2">Problems</th><th className="px-3 py-2">Penalty</th><th className="px-3 py-2">Raw Score</th><th className="px-3 py-2">Contest Score</th><th className="px-3 py-2">Bonus</th><th className="px-3 py-2">Final Score</th></tr>
+                </thead>
+                <tbody>
+                  {player.history.map(({ contest, entry }) => (
+                    <tr key={contest.id} className="border-t border-white/10">
+                      <td className="px-3 py-3 font-[family-name:var(--font-display)] text-white">{contest.title}</td>
+                      <td className="px-3 py-3">#{entry.rank}</td>
+                      <td className="px-3 py-3">{entry.solved}</td>
+                      <td className="px-3 py-3">{entry.solvedProblems.join(", ") || "None"}</td>
+                      <td className="px-3 py-3">{entry.penalty}</td>
+                      <td className="px-3 py-3">{entry.rawScore}</td>
+                      <td className="px-3 py-3">{entry.contestScore}</td>
+                      <td className="px-3 py-3 text-[#F3C55B]">+{entry.bonusPoints}</td>
+                      <td className="px-3 py-3 font-[family-name:var(--font-display)] text-[#9AFF00]">{entry.finalScore}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : <p className="mt-5 text-sm text-zinc-500">No contest history recorded yet.</p>}
         </section>
 
         <section className="section-band mt-6 p-5">

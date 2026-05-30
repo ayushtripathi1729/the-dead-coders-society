@@ -3,10 +3,9 @@ import "server-only";
 import type { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
-import { bonusForRank, finalContestScore, societyRatingDelta } from "@/lib/scoring";
+import { bonusForRank, contestScore, finalChampionshipScore, rawScoreForSolveVector, societyRatingDelta } from "@/lib/scoring";
 import { deleteFromCloudinary } from "@/server/uploads/cloudinary";
 
-const statusSchema = z.enum(["UPCOMING", "LIVE", "FINISHED"]);
 const visibilitySchema = z.enum(["PUBLIC", "PRIVATE", "ARCHIVED"]);
 type DbClient = Prisma.TransactionClient | typeof prisma;
 
@@ -21,6 +20,7 @@ const coordinatorSchema = z.object({
 const problemSchema = z.object({
   code: z.string().min(1).max(16),
   title: z.string().max(120).optional().or(z.literal("")).nullable(),
+  points: z.coerce.number().int().positive().max(1_000_000),
   firstSolveUsernames: z.array(z.string().min(1).max(48)).default([]),
 });
 
@@ -35,19 +35,18 @@ export const contestInputSchema = z.object({
   contestLink: z.string().url().optional().or(z.literal("")).nullable(),
   startTime: z.coerce.date(),
   duration: z.coerce.number().int().positive().max(1440).default(120),
-  status: statusSchema.default("UPCOMING"),
   visibility: visibilitySchema.default("PUBLIC"),
   scoringSystem: z.string().min(2).max(80).default("TDCS_TOP5_V1"),
   prizePool: z.string().max(120).optional().or(z.literal("")).nullable(),
-  totalPoints: z.coerce.number().int().positive().default(1000),
   coordinators: z.array(coordinatorSchema).optional(),
+  problems: z.array(problemSchema).optional(),
 });
 
 export const entryInputSchema = z.object({
-  username: z.string().min(1).max(48).regex(/^[a-zA-Z0-9_.-]+$/),
-  fullName: z.string().min(1).max(120),
-  solved: z.coerce.number().int().min(0),
+  username: z.string().trim().min(1).max(48).regex(/^[a-zA-Z0-9_.+-]+$/),
+  fullName: z.string().trim().min(1).max(120),
   penalty: z.coerce.number().int().min(0),
+  solveVector: z.preprocess(parseSolveVector, z.array(z.number().int().min(0).max(1))),
   notes: z.string().max(1000).optional().nullable(),
 });
 
@@ -65,30 +64,65 @@ export function slugify(input: string) {
     .replace(/(^-|-$)/g, "");
 }
 
-function rankEntries(entries: EntryInput[], totalPoints: number) {
+const defaultProblems = Array.from({ length: 5 }, (_, index) => ({
+  code: String.fromCharCode("A".charCodeAt(0) + index),
+  title: "",
+  points: (index + 1) * 100,
+  firstSolveUsernames: [],
+}));
+
+function rankEntries(entries: EntryInput[], problems: { code: string; points: number }[]) {
   const seen = new Set<string>();
   const normalized = entries.map((entry) => {
     const parsed = entryInputSchema.parse(entry);
     const key = parsed.username.toLowerCase();
-    if (seen.has(key)) throw new Error(`Duplicate participant username: ${parsed.username}`);
+    if (seen.has(key)) throw new Error("Username already exists in this contest.");
+    if (parsed.solveVector.length !== problems.length) {
+      throw new Error(`Solve vector for "${parsed.username}" must contain exactly ${problems.length} values.`);
+    }
     seen.add(key);
+    const solved = parsed.solveVector.reduce((sum, value) => sum + value, 0);
+    const solvedProblems = problems.filter((_, index) => parsed.solveVector[index] === 1).map((problem) => problem.code);
+    const rawScore = rawScoreForSolveVector(problems.map((problem) => problem.points), parsed.solveVector);
     return {
       ...parsed,
-      rawScore: totalPoints - parsed.penalty,
+      username: key,
+      solved,
+      solvedProblems,
+      rawScore,
+      contestScore: contestScore(rawScore, parsed.penalty),
     };
   });
 
+  let previous: (typeof normalized)[number] | undefined;
+  let previousRank = 0;
   return normalized
     .sort((a, b) => b.solved - a.solved || a.penalty - b.penalty || a.username.localeCompare(b.username))
     .map((entry, index) => {
-      const rank = index + 1;
+      const rank = previous && previous.solved === entry.solved && previous.penalty === entry.penalty
+        ? previousRank
+        : index + 1;
       const bonusPoints = bonusForRank(rank);
-      return { ...entry, rank, bonusPoints, finalScore: finalContestScore(totalPoints, entry.penalty, bonusPoints) };
+      const rankedEntry = { ...entry, rank, bonusPoints, finalScore: finalChampionshipScore(entry.contestScore, bonusPoints) };
+      previous = entry;
+      previousRank = rank;
+      return rankedEntry;
     })
+}
+
+function parseSolveVector(value: unknown) {
+  if (Array.isArray(value)) return value;
+  if (typeof value !== "string") return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    throw new Error(`Invalid solve vector "${value}". Use a JSON array such as [1,1,0,1].`);
+  }
 }
 
 function parseProblems(rawProblems: unknown[]) {
   const problems = rawProblems.map((problem) => problemSchema.parse(problem));
+  if (!problems.length) throw new Error("Add at least one contest problem.");
   const seenProblemCodes = new Set<string>();
   for (const problem of problems) {
     const code = problem.code.trim().toUpperCase();
@@ -100,7 +134,8 @@ function parseProblems(rawProblems: unknown[]) {
 
 export async function createOrUpdateContest(input: unknown, id?: string, adminId?: string) {
   const data = contestInputSchema.parse(input);
-  const { coordinators, ...contestFields } = data;
+  const { coordinators, problems: rawProblems, ...contestFields } = data;
+  const problems = rawProblems ? parseProblems(rawProblems) : id ? undefined : defaultProblems;
   const slug = data.slug ? slugify(data.slug) : slugify(data.title);
   const payload = {
     ...contestFields,
@@ -111,6 +146,7 @@ export async function createOrUpdateContest(input: unknown, id?: string, adminId
     contestLink: optionalString(data.contestLink),
     prizePool: optionalString(data.prizePool),
     createdById: adminId,
+    ...(problems ? { totalPoints: problems.reduce((sum, problem) => sum + problem.points, 0) } : {}),
   };
 
   const contest = await prisma.$transaction(async (tx) => {
@@ -135,6 +171,10 @@ export async function createOrUpdateContest(input: unknown, id?: string, adminId
         })),
       });
     }
+    if (problems) {
+      if (id) await ensureContestMutable(saved.id, tx);
+      await saveContestProblems(saved.id, problems, tx);
+    }
     return saved;
   });
 
@@ -151,13 +191,21 @@ export async function deleteContest(id: string, adminId?: string) {
   return contest;
 }
 
-export async function upsertContestEntries(contestId: string, rawEntries: unknown[], adminId?: string) {
+export async function upsertContestEntries(contestId: string, rawEntries: unknown[], adminId?: string, { allowExisting = false } = {}) {
   const entries = rawEntries.map((entry) => entryInputSchema.parse(entry));
   const saved = await prisma.$transaction(async (tx) => {
     await ensureContestMutable(contestId, tx);
     const existing = await tx.contestStanding.findMany({ where: { contestId }, include: { player: true } });
-    const merged = new Map<string, EntryInput>(existing.map((row) => [row.player.username.toLowerCase(), { username: row.player.username, fullName: row.player.fullName, solved: row.solved, penalty: row.penalty, notes: row.notes }]));
-    for (const entry of entries) merged.set(entry.username.toLowerCase(), entry);
+    const merged = new Map<string, EntryInput>(existing.map((row) => [row.player.username.toLowerCase(), { username: row.player.username, fullName: row.player.fullName, solveVector: row.solveVector, penalty: row.penalty, notes: row.notes }]));
+    const incoming = new Set<string>();
+    for (const entry of entries) {
+      const key = entry.username.toLowerCase();
+      if (incoming.has(key) || (!allowExisting && merged.has(key))) {
+        throw new Error("Username already exists in this contest.");
+      }
+      incoming.add(key);
+      merged.set(key, entry);
+    }
     return replaceContestStandings(contestId, [...merged.values()], tx);
   }, { maxWait: 10_000, timeout: 30_000 });
 
@@ -172,7 +220,7 @@ export async function updateContestEntry(contestId: string, standingId: string, 
     const standing = await tx.contestStanding.findUniqueOrThrow({ where: { id: standingId }, include: { player: true } });
     if (standing.contestId !== contestId) throw new Error("Standing row not found.");
     const rows = await tx.contestStanding.findMany({ where: { contestId }, include: { player: true } });
-    const next = rows.map((row) => row.id === standingId ? entry : { username: row.player.username, fullName: row.player.fullName, solved: row.solved, penalty: row.penalty, notes: row.notes });
+    const next = rows.map((row) => row.id === standingId ? entry : { username: row.player.username, fullName: row.player.fullName, solveVector: row.solveVector, penalty: row.penalty, notes: row.notes });
     await replaceContestStandings(contestId, next, tx);
   }, { maxWait: 10_000, timeout: 30_000 });
   await logActivity(adminId, "participant.edited", "ContestStanding", standingId, { contestId });
@@ -183,10 +231,11 @@ export async function deleteContestEntry(contestId: string, standingId: string, 
     await ensureContestMutable(contestId, tx);
     const standing = await tx.contestStanding.findUniqueOrThrow({ where: { id: standingId } });
     if (standing.contestId !== contestId) throw new Error("Standing row not found.");
+    await tx.firstSolve.deleteMany({ where: { playerUsername: standing.playerUsername, problem: { contestId } } });
     await tx.contestStanding.delete({ where: { id: standingId } });
-    await tx.contestParticipation.deleteMany({ where: { contestId, playerId: standing.playerId } });
+    await tx.contestParticipation.deleteMany({ where: { contestId, playerUsername: standing.playerUsername } });
     const rows = await tx.contestStanding.findMany({ where: { contestId }, include: { player: true } });
-    await replaceContestStandings(contestId, rows.map((row) => ({ username: row.player.username, fullName: row.player.fullName, solved: row.solved, penalty: row.penalty, notes: row.notes })), tx);
+    await replaceContestStandings(contestId, rows.map((row) => ({ username: row.player.username, fullName: row.player.fullName, solveVector: row.solveVector, penalty: row.penalty, notes: row.notes })), tx);
   }, { maxWait: 10_000, timeout: 30_000 });
   await logActivity(adminId, "participant.deleted", "ContestStanding", standingId, { contestId });
 }
@@ -207,7 +256,7 @@ export async function saveContestProblemDraft(contestId: string, rawProblems: un
     const edited = problems.filter((problem, index) => {
       const code = problem.code.trim().toUpperCase();
       const previous = previousByCode.get(code);
-      return previous && (previous.title !== optionalString(problem.title) || previous.sortOrder !== index);
+      return previous && (previous.title !== optionalString(problem.title) || previous.points !== problem.points || previous.sortOrder !== index);
     }).length;
     const deleted = previousProblems.filter((problem) => !nextCodes.has(problem.code)).length;
     if (added) {
@@ -263,7 +312,8 @@ export async function finalizeContestStandings(contestId: string, rawProblems: u
     const standings = await tx.contestStanding.findMany({ where: { contestId } });
     if (!standings.length) throw new Error("Add at least one participant before finalizing standings.");
     await saveContestProblems(contestId, problems, tx);
-    await tx.contest.update({ where: { id: contestId }, data: { standingsFinalizedAt: new Date(), status: "FINISHED" } });
+    await tx.contest.update({ where: { id: contestId }, data: { standingsFinalizedAt: new Date() } });
+    await refreshAllDerived(tx);
     await tx.activityLog.create({
       data: {
         adminId,
@@ -274,9 +324,8 @@ export async function finalizeContestStandings(contestId: string, rawProblems: u
       },
     });
     return { finalized: true, rows: standings.length };
-  }, { maxWait: 10_000, timeout: 30_000 });
+  }, { maxWait: 10_000, timeout: 120_000 });
 
-  if (result.finalized) await refreshAllDerived();
   if (!result.finalized) await logActivity(adminId, "standings.finalize.idempotent", "Contest", contestId, { rows: result.rows });
   return result;
 }
@@ -289,7 +338,7 @@ export async function recalculateContest(contestId: string, adminId?: string) {
       return;
     }
     const rows = await tx.contestStanding.findMany({ where: { contestId }, include: { player: true } });
-    await replaceContestStandings(contestId, rows.map((row) => ({ username: row.player.username, fullName: row.player.fullName, solved: row.solved, penalty: row.penalty, notes: row.notes })), tx);
+    await replaceContestStandings(contestId, rows.map((row) => ({ username: row.player.username, fullName: row.player.fullName, solveVector: row.solveVector, penalty: row.penalty, notes: row.notes })), tx);
     await refreshAllDerived(tx);
   }, { maxWait: 10_000, timeout: 30_000 });
   await logActivity(adminId, "standings.recalculate", "Contest", contestId);
@@ -301,11 +350,10 @@ async function ensureContestMutable(contestId: string, db: DbClient) {
 }
 
 async function replaceContestStandings(contestId: string, entries: EntryInput[], db: DbClient) {
-  const contest = await db.contest.findUniqueOrThrow({ where: { id: contestId }, select: { totalPoints: true } });
-  const ranked = rankEntries(entries, contest.totalPoints);
-  const saved = [];
-  await db.contestParticipation.deleteMany({ where: { contestId } });
-  await db.contestStanding.deleteMany({ where: { contestId } });
+  const problems = await db.contestProblem.findMany({ where: { contestId }, orderBy: [{ sortOrder: "asc" }, { code: "asc" }] });
+  if (!problems.length) throw new Error("Add contest problems before entering standings.");
+  const ranked = rankEntries(entries, problems);
+  const savedUsernames: string[] = [];
 
   for (const entry of ranked) {
     const existingPlayer = await db.player.findFirst({
@@ -315,39 +363,80 @@ async function replaceContestStandings(contestId: string, entries: EntryInput[],
       ? await db.player.update({ where: { id: existingPlayer.id }, data: { fullName: entry.fullName, username: existingPlayer.username } })
       : await db.player.create({ data: { username: entry.username, fullName: entry.fullName } });
 
-    await db.contestParticipation.create({
-      data: {
-        contestId,
-        playerId: player.id,
+    savedUsernames.push(player.username);
+    await db.contestParticipation.upsert({
+      where: { contestId_playerUsername: { contestId, playerUsername: player.username } },
+      update: {
         finalRank: entry.rank,
         finalScore: entry.finalScore,
         solved: entry.solved,
+        solveVector: entry.solveVector,
+        solvedProblems: entry.solvedProblems,
+        rawScore: entry.rawScore,
+        contestScore: entry.contestScore,
+        penalty: entry.penalty,
+      },
+      create: {
+        contestId,
+        playerUsername: player.username,
+        finalRank: entry.rank,
+        finalScore: entry.finalScore,
+        solved: entry.solved,
+        solveVector: entry.solveVector,
+        solvedProblems: entry.solvedProblems,
+        rawScore: entry.rawScore,
+        contestScore: entry.contestScore,
         penalty: entry.penalty,
       },
     });
 
-    saved.push(await db.contestStanding.create({
-      data: {
-        contestId,
-        playerId: player.id,
+    await db.contestStanding.upsert({
+      where: { contestId_playerUsername: { contestId, playerUsername: player.username } },
+      update: {
         rank: entry.rank,
         solved: entry.solved,
+        solveVector: entry.solveVector,
+        solvedProblems: entry.solvedProblems,
         penalty: entry.penalty,
         rawScore: entry.rawScore,
+        contestScore: entry.contestScore,
+        bonusPoints: entry.bonusPoints,
+        finalScore: entry.finalScore,
+        notes: entry.notes || undefined,
+      },
+      create: {
+        contestId,
+        playerUsername: player.username,
+        rank: entry.rank,
+        solved: entry.solved,
+        solveVector: entry.solveVector,
+        solvedProblems: entry.solvedProblems,
+        penalty: entry.penalty,
+        rawScore: entry.rawScore,
+        contestScore: entry.contestScore,
         bonusPoints: entry.bonusPoints,
         finalScore: entry.finalScore,
         firstSolves: 0,
         notes: entry.notes || undefined,
       },
-    }));
+    });
   }
-  return saved;
+  const removedStandings = await db.contestStanding.findMany({
+    where: { contestId, playerUsername: savedUsernames.length ? { notIn: savedUsernames } : undefined },
+    select: { playerUsername: true },
+  });
+  const removedUsernames = removedStandings.map((standing) => standing.playerUsername);
+  if (removedUsernames.length) {
+    await db.firstSolve.deleteMany({ where: { playerUsername: { in: removedUsernames }, problem: { contestId } } });
+  }
+  await db.contestParticipation.deleteMany({ where: { contestId, playerUsername: savedUsernames.length ? { notIn: savedUsernames } : undefined } });
+  await db.contestStanding.deleteMany({ where: { contestId, playerUsername: savedUsernames.length ? { notIn: savedUsernames } : undefined } });
+  await syncFirstSolveCounts(contestId, db);
+  return db.contestStanding.findMany({ where: { contestId }, orderBy: { rank: "asc" } });
 }
 
 async function saveContestProblems(contestId: string, problems: z.infer<typeof problemSchema>[], db: DbClient) {
-  await db.firstSolve.deleteMany({ where: { contestId } });
   await db.contestProblem.deleteMany({ where: { contestId } });
-  await db.contestStanding.updateMany({ where: { contestId }, data: { firstSolves: 0 } });
   const standingPlayers = await db.contestStanding.findMany({ where: { contestId }, include: { player: true } });
   const playersByUsername = new Map(standingPlayers.map((standing) => [standing.player.username.toLowerCase(), standing.player]));
 
@@ -357,6 +446,7 @@ async function saveContestProblems(contestId: string, problems: z.infer<typeof p
         contestId,
         code: problem.code.trim().toUpperCase(),
         title: optionalString(problem.title),
+        points: problem.points,
         sortOrder: index,
       },
     });
@@ -365,22 +455,37 @@ async function saveContestProblems(contestId: string, problems: z.infer<typeof p
     for (const username of uniqueUsernames) {
       const player = playersByUsername.get(username);
       if (!player) throw new Error(`First solve user "${username}" is not in this contest's standings.`);
-      await db.problemFirstSolve.create({ data: { problemId: contestProblem.id, playerId: player.id } });
       await db.firstSolve.create({
         data: {
-          contestId,
-          playerId: player.id,
-          problemCode: contestProblem.code,
-          timestamp: new Date(),
-          pointsAwarded: 0,
+          playerUsername: player.username,
+          problemId: contestProblem.id,
         },
       });
     }
   }
+  await db.contest.update({
+    where: { id: contestId },
+    data: { totalPoints: problems.reduce((sum, problem) => sum + problem.points, 0) },
+  });
+  await syncFirstSolveCounts(contestId, db);
+  if (standingPlayers.length) {
+    await replaceContestStandings(contestId, standingPlayers.map((standing) => ({
+      username: standing.player.username,
+      fullName: standing.player.fullName,
+      solveVector: standing.solveVector,
+      penalty: standing.penalty,
+      notes: standing.notes,
+    })), db);
+  }
+}
 
-  const counts = await db.firstSolve.groupBy({ by: ["playerId"], where: { contestId }, _count: { _all: true } });
-  for (const count of counts) {
-    await db.contestStanding.updateMany({ where: { contestId, playerId: count.playerId }, data: { firstSolves: count._count._all } });
+async function syncFirstSolveCounts(contestId: string, db: DbClient) {
+  await db.contestStanding.updateMany({ where: { contestId }, data: { firstSolves: 0 } });
+  const firstSolves = await db.firstSolve.findMany({ where: { problem: { contestId } }, select: { playerUsername: true } });
+  const counts = new Map<string, number>();
+  for (const firstSolve of firstSolves) counts.set(firstSolve.playerUsername, (counts.get(firstSolve.playerUsername) ?? 0) + 1);
+  for (const [playerUsername, firstSolves] of counts) {
+    await db.contestStanding.updateMany({ where: { contestId, playerUsername }, data: { firstSolves } });
   }
 }
 
@@ -401,9 +506,9 @@ async function refreshAllDerived(db: DbClient = prisma) {
 }
 
 async function recomputeRatings(db: DbClient = prisma) {
-  const players = await db.player.findMany({ select: { id: true } });
-  const ratings = new Map(players.map((player) => [player.id, 1200]));
-  const peaks = new Map(players.map((player) => [player.id, 1200]));
+  const players = await db.player.findMany({ select: { username: true } });
+  const ratings = new Map(players.map((player) => [player.username, 1200]));
+  const peaks = new Map(players.map((player) => [player.username, 1200]));
   const contests = await db.contest.findMany({
     where: { visibility: { not: "PRIVATE" }, standingsFinalizedAt: { not: null } },
     include: { standings: { orderBy: { rank: "asc" } } },
@@ -414,18 +519,18 @@ async function recomputeRatings(db: DbClient = prisma) {
   for (const contest of contests) {
     const participantCount = Math.max(contest.standings.length, 1);
     for (const standing of contest.standings) {
-      const current = ratings.get(standing.playerId) ?? 1200;
+      const current = ratings.get(standing.playerUsername) ?? 1200;
       const delta = societyRatingDelta({ rank: standing.rank, solved: standing.solved, participantCount, finalScore: standing.finalScore, firstSolves: standing.firstSolves });
       const next = Math.max(100, current + delta);
-      ratings.set(standing.playerId, next);
-      peaks.set(standing.playerId, Math.max(peaks.get(standing.playerId) ?? 1200, next));
-      await db.ratingHistory.create({ data: { playerId: standing.playerId, contestId: contest.id, rating: next, delta, reason: "TDCS standings finalization" } });
-      await db.contestParticipation.updateMany({ where: { contestId: contest.id, playerId: standing.playerId }, data: { ratingDelta: delta } });
+      ratings.set(standing.playerUsername, next);
+      peaks.set(standing.playerUsername, Math.max(peaks.get(standing.playerUsername) ?? 1200, next));
+      await db.ratingHistory.create({ data: { playerUsername: standing.playerUsername, contestId: contest.id, rating: next, delta, reason: "TDCS standings finalization" } });
+      await db.contestParticipation.updateMany({ where: { contestId: contest.id, playerUsername: standing.playerUsername }, data: { ratingDelta: delta } });
     }
   }
 
   for (const player of players) {
-    await db.player.update({ where: { id: player.id }, data: { currentRating: ratings.get(player.id) ?? 1200, peakRating: peaks.get(player.id) ?? 1200 } });
+    await db.player.update({ where: { username: player.username }, data: { currentRating: ratings.get(player.username) ?? 1200, peakRating: peaks.get(player.username) ?? 1200 } });
   }
 }
 
@@ -454,8 +559,8 @@ async function rebuildMonthlyLeaderboard(year: number, month: number, db: DbClie
   await db.monthlyLeaderboard.deleteMany({ where: { year, month } });
   if (isCurrentMonth) await db.player.updateMany({ data: { monthlyRank: null } });
   for (const row of rows) {
-    await db.monthlyLeaderboard.create({ data: { playerId: row.playerId, year, month, rank: row.rank, totalScore: row.totalScore, contests: row.contests, wins: row.wins, solved: row.solved, firstSolves: row.firstSolves, averageRank: row.averageRank } });
-    if (isCurrentMonth) await db.player.update({ where: { id: row.playerId }, data: { monthlyRank: row.rank } });
+    await db.monthlyLeaderboard.create({ data: { playerUsername: row.playerUsername, year, month, rank: row.rank, totalScore: row.totalScore, contests: row.contests, wins: row.wins, solved: row.solved, firstSolves: row.firstSolves, averageRank: row.averageRank } });
+    if (isCurrentMonth) await db.player.update({ where: { username: row.playerUsername }, data: { monthlyRank: row.rank } });
   }
 }
 
@@ -467,23 +572,23 @@ async function rebuildYearlyLeaderboard(year: number, db: DbClient = prisma) {
   await db.yearlyLeaderboard.deleteMany({ where: { year } });
   if (isCurrentYear) await db.player.updateMany({ data: { yearlyRank: null } });
   for (const row of rows) {
-    await db.yearlyLeaderboard.create({ data: { playerId: row.playerId, year, rank: row.rank, totalScore: row.totalScore, contests: row.contests, wins: row.wins, solved: row.solved, firstSolves: row.firstSolves, averageRank: row.averageRank } });
-    if (isCurrentYear) await db.player.update({ where: { id: row.playerId }, data: { yearlyRank: row.rank } });
+    await db.yearlyLeaderboard.create({ data: { playerUsername: row.playerUsername, year, rank: row.rank, totalScore: row.totalScore, contests: row.contests, wins: row.wins, solved: row.solved, firstSolves: row.firstSolves, averageRank: row.averageRank } });
+    if (isCurrentYear) await db.player.update({ where: { username: row.playerUsername }, data: { yearlyRank: row.rank } });
   }
 }
 
 async function aggregatePeriod(where: Prisma.ContestWhereInput, db: DbClient = prisma) {
   const contests = await db.contest.findMany({ where, include: { standings: true } });
-  const grouped = new Map<string, { playerId: string; totalScore: number; contests: number; wins: number; solved: number; firstSolves: number; placements: number }>();
+  const grouped = new Map<string, { playerUsername: string; totalScore: number; contests: number; wins: number; solved: number; firstSolves: number; placements: number }>();
   for (const standing of contests.flatMap((contest) => contest.standings)) {
-    const current = grouped.get(standing.playerId) ?? { playerId: standing.playerId, totalScore: 0, contests: 0, wins: 0, solved: 0, firstSolves: 0, placements: 0 };
+    const current = grouped.get(standing.playerUsername) ?? { playerUsername: standing.playerUsername, totalScore: 0, contests: 0, wins: 0, solved: 0, firstSolves: 0, placements: 0 };
     current.totalScore += standing.finalScore;
     current.contests += 1;
     current.wins += standing.rank === 1 ? 1 : 0;
     current.solved += standing.solved;
     current.firstSolves += standing.firstSolves;
     current.placements += standing.rank;
-    grouped.set(standing.playerId, current);
+    grouped.set(standing.playerUsername, current);
   }
   return [...grouped.values()]
     .sort((a, b) => b.totalScore - a.totalScore || b.wins - a.wins || b.solved - a.solved)
@@ -499,14 +604,14 @@ async function rebuildHallOfFame(contestId: string, db: DbClient = prisma) {
   for (const standing of finalists) {
     const isWinner = standing.rank === 1;
     await db.hallOfFame.upsert({
-      where: { id: `${contestId}:${standing.playerId}` },
-      update: { score: standing.bonusPoints },
+      where: { id: `${contestId}:${standing.playerUsername}` },
+      update: { score: standing.finalScore },
       create: {
-        id: `${contestId}:${standing.playerId}`,
-        playerId: standing.playerId,
+        id: `${contestId}:${standing.playerUsername}`,
+        playerUsername: standing.playerUsername,
         contestId,
         title: `${isWinner ? "Champion" : `Rank #${standing.rank}`} of ${standing.contest.title}`,
-        score: standing.bonusPoints,
+        score: standing.finalScore,
         badges: JSON.stringify([isWinner ? "Champion" : "Top 5", `Rank #${standing.rank}`]),
         specialTitles: JSON.stringify([isWinner ? "Society Laureate" : "Society Finalist"]),
       },
@@ -525,19 +630,36 @@ async function rebuildAchievements(db: DbClient = prisma) {
     if (player.monthlyRank === 1) titles.add("Monthly Champion");
     if (player.yearlyRank === 1) titles.add("Yearly Champion");
     for (const title of titles) {
-      await db.achievement.create({ data: { playerId: player.id, title } });
+      await db.achievement.create({ data: { playerUsername: player.username, title } });
     }
   }
 }
 
 export function parseStandingsText(text: string): EntryInput[] {
-  const lines = text.replace(/<[^>]*>/g, "\n").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-  return lines.map((line) => {
-    const parts = line.split(/,|\t|\s{2,}/).map((part) => part.trim()).filter(Boolean);
-    if (parts.length < 4) throw new Error(`Invalid standings row: "${line}". Use full name, username, penalty, solved.`);
-    const [fullName, username, penalty, solved] = parts;
-    return { fullName, username, penalty: Number(penalty), solved: Number(solved) };
-  });
+  const cleaned = text.replace(/<[^>]*>/g, "\n").trim();
+  if (!cleaned) throw new Error("Add at least one standings row.");
+  const pattern = /([^,\n]+?)\s*,\s*([^,\n]+?)\s*,\s*(\d+)\s*,\s*(\[[^\]]*\])/g;
+  const entries: EntryInput[] = [];
+  const unmatched: string[] = [];
+  let cursor = 0;
+  for (const match of cleaned.matchAll(pattern)) {
+    const index = match.index ?? 0;
+    const separator = cleaned.slice(cursor, index).replace(/[\s,;]+/g, "");
+    if (separator) unmatched.push(separator);
+    entries.push(entryInputSchema.parse({
+      fullName: match[1],
+      username: match[2],
+      penalty: match[3],
+      solveVector: match[4],
+    }));
+    cursor = index + match[0].length;
+  }
+  const tail = cleaned.slice(cursor).replace(/[\s,;]+/g, "");
+  if (tail) unmatched.push(tail);
+  if (!entries.length || unmatched.length) {
+    throw new Error("Invalid standings format. Use: Full Name, username, penalty, [1,1,0,1].");
+  }
+  return entries;
 }
 
 export async function logActivity(adminId: string | undefined, action: string, entity: string, entityId?: string, metadata?: Prisma.InputJsonValue) {

@@ -21,10 +21,13 @@ export default async function Home() {
     monthlyLeaderboard(now.getUTCFullYear(), now.getUTCMonth() + 1),
     yearlyLeaderboard(now.getUTCFullYear()),
   ]);
-  const latestContest = contests.find((contest) => contest.status === "LIVE") ?? contests.find((contest) => contest.status === "UPCOMING") ?? contests[0];
-  const previousContest = contests.find((contest) => contest.status === "FINISHED" && contest.entries.length);
-  const upcoming = contests.filter((contest) => contest.status === "UPCOMING").slice(0, 3);
-  const winners = contests.filter((contest) => contest.entries.length).map((contest) => ({ contest, winner: contest.entries[0] })).slice(0, 3);
+  const liveContest = contests.find((contest) => contest.status === "LIVE");
+  const upcomingContest = contests.filter((contest) => contest.status === "UPCOMING").sort((a, b) => a.startTime.localeCompare(b.startTime))[0];
+  const completedContest = contests.find((contest) => contest.status === "COMPLETED");
+  const latestContest = liveContest ?? upcomingContest ?? completedContest;
+  const previousContest = contests.find((contest) => contest.status === "COMPLETED" && contest.standingsFinalizedAt && contest.entries.length);
+  const upcoming = contests.filter((contest) => contest.status === "UPCOMING").sort((a, b) => a.startTime.localeCompare(b.startTime)).slice(0, 3);
+  const winners = contests.filter((contest) => contest.status === "COMPLETED" && contest.standingsFinalizedAt && contest.entries.length).map((contest) => ({ contest, winner: contest.entries[0] })).slice(0, 3);
   const totalSolves = year.rows.reduce((sum, row) => sum + row.solved, 0);
 
   return (
@@ -98,6 +101,12 @@ export default async function Home() {
               </>
             ) : <EmptyState title="No contest scheduled" copy="The control room can publish the first official championship round." />}
           </div>
+        </section>
+
+        <section className="mt-5 grid gap-5 lg:grid-cols-3">
+          <LifecycleContest title="Upcoming Contest" contest={upcomingContest} empty="No upcoming contest scheduled." />
+          <LifecycleContest title="Live Contest" contest={liveContest} empty="No contest is live right now." />
+          <LifecycleContest title="Latest Completed Contest" contest={completedContest} empty="No completed contest yet." />
         </section>
 
         <section className="mt-5 grid gap-5 lg:grid-cols-[.9fr_1.1fr]">
@@ -183,5 +192,20 @@ function EmptyState({ title, copy }: { title: string; copy: string }) {
       <p className="certificate-title text-2xl text-[#9AFF00]">{title}</p>
       <p className="mt-2 text-sm text-zinc-400">{copy}</p>
     </div>
+  );
+}
+
+function LifecycleContest({ title, contest, empty }: { title: string; contest: Awaited<ReturnType<typeof listContests>>[number] | undefined; empty: string }) {
+  return (
+    <section className="section-band p-5">
+      <h2 className="font-[family-name:var(--font-display)] uppercase tracking-[0.16em] text-white">{title}</h2>
+      {contest ? (
+        <div className="mt-4 grid gap-3">
+          <StatusBadge status={contest.status} />
+          <Link href={`/contests/${contest.slug}`} className="font-[family-name:var(--font-display)] text-xl uppercase text-[#9AFF00]">{contest.title}</Link>
+          <p className="text-sm text-zinc-500">{formatDateUTC(contest.startTime)}</p>
+        </div>
+      ) : <p className="mt-4 text-sm text-zinc-500">{empty}</p>}
+    </section>
   );
 }

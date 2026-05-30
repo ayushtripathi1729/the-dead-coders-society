@@ -8,7 +8,7 @@ import { uploadDataUriToCloudinary } from "@/server/uploads/cloudinary";
 const certificateSchema = z.object({
   type: z.enum(["PARTICIPATION", "WINNER", "CONTEST"]),
   title: z.string().min(2).max(140),
-  playerId: z.string().optional(),
+  playerUsername: z.string().optional(),
   contestId: z.string().optional(),
 });
 
@@ -19,7 +19,7 @@ export async function POST(request: NextRequest) {
   try {
     const input = certificateSchema.parse(await readBody(request));
     const [player, contest] = await Promise.all([
-      input.playerId ? prisma.player.findUnique({ where: { id: input.playerId } }) : null,
+      input.playerUsername ? prisma.player.findUnique({ where: { username: input.playerUsername } }) : null,
       input.contestId ? prisma.contest.findUnique({ where: { id: input.contestId } }) : null,
     ]);
 
@@ -33,7 +33,7 @@ export async function POST(request: NextRequest) {
       data: {
         type: input.type,
         title: input.title,
-        playerId: input.playerId,
+        playerUsername: input.playerUsername,
         contestId: input.contestId,
         assetUrl: uploaded.url,
       },

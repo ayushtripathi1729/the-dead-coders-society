@@ -14,7 +14,7 @@ export async function POST(request: NextRequest) {
   try {
     const entries = await fetchCodeforcesStandings(standingsUrl);
     if (contestId) {
-      await upsertContestEntries(contestId, entries, admin.id);
+      await upsertContestEntries(contestId, entries, admin.id, { allowExisting: true });
     }
     return NextResponse.json({
       ok: true,

@@ -12,12 +12,16 @@ export function bonusForRank(rank: number) {
   return placementBonus[rank] ?? 0;
 }
 
-export function rawScoreForSolved(solved: number) {
-  return solved * 100;
+export function rawScoreForSolveVector(problemPoints: number[], solveVector: number[]) {
+  return problemPoints.reduce((sum, points, index) => sum + (solveVector[index] === 1 ? points : 0), 0);
 }
 
-export function finalContestScore(totalPoints: number, penalty: number, prizePoints = 0) {
-  return totalPoints - penalty + prizePoints;
+export function contestScore(rawScore: number, penalty: number) {
+  return rawScore - penalty;
+}
+
+export function finalChampionshipScore(contestPoints: number, bonusPoints = 0) {
+  return contestPoints + bonusPoints;
 }
 
 export function scoreEntry(entry: Omit<ContestEntry, "bonusPoints" | "finalScore">): ContestEntry {
@@ -25,7 +29,7 @@ export function scoreEntry(entry: Omit<ContestEntry, "bonusPoints" | "finalScore
   return {
     ...entry,
     bonusPoints,
-    finalScore: finalContestScore(entry.rawScore + entry.penalty, entry.penalty, bonusPoints),
+    finalScore: finalChampionshipScore(entry.contestScore, bonusPoints),
   };
 }
 

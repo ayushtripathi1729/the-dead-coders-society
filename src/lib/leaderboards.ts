@@ -1,16 +1,15 @@
 import "server-only";
 
-import type { Contest, ContestCoordinator, ContestProblem, ContestStanding, FirstSolve, Player, ProblemFirstSolve } from "@prisma/client";
+import type { Contest, ContestCoordinator, ContestProblem, ContestStanding, FirstSolve, Player } from "@prisma/client";
+import { contestStatusAt } from "@/lib/contest-status";
 import { prisma } from "@/lib/prisma";
-import type { ContestStatus, ContestView, LeaderboardRow } from "@/lib/types";
+import type { ContestView, LeaderboardRow } from "@/lib/types";
 
 type EntryWithPlayer = ContestStanding & { player: Player };
-type FirstSolveWithPlayer = FirstSolve & { player: Player };
 type ContestWithEntries = Contest & {
   standings: EntryWithPlayer[];
   coordinators: ContestCoordinator[];
-  firstSolvesRows: FirstSolveWithPlayer[];
-  problems: (ContestProblem & { firstSolves: (ProblemFirstSolve & { player: Player })[] })[];
+  problems: (ContestProblem & { firstSolves: (FirstSolve & { player: Player })[] })[];
 };
 
 function toContestView(contest: ContestWithEntries): ContestView {
@@ -26,7 +25,7 @@ function toContestView(contest: ContestWithEntries): ContestView {
     contestLink: contest.contestLink,
     startTime: contest.startTime.toISOString(),
     duration: contest.duration,
-    status: contest.status as ContestStatus,
+    status: contestStatusAt(contest.startTime, contest.duration),
     updatedAt: contest.updatedAt.toISOString(),
     visibility: contest.visibility,
     scoringSystem: contest.scoringSystem,
@@ -41,21 +40,22 @@ function toContestView(contest: ContestWithEntries): ContestView {
       phone: coordinator.phone,
       discord: coordinator.discord,
     })),
-    firstSolveRows: contest.firstSolvesRows
-      .sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime())
-      .map((firstSolve) => ({
+    firstSolveRows: contest.problems
+      .flatMap((problem) => problem.firstSolves.map((firstSolve) => ({
         id: firstSolve.id,
-        problemCode: firstSolve.problemCode,
-        timestamp: firstSolve.timestamp.toISOString(),
-        pointsAwarded: firstSolve.pointsAwarded,
+        problemCode: problem.code,
+        timestamp: firstSolve.createdAt.toISOString(),
+        pointsAwarded: problem.points,
         player: { username: firstSolve.player.username, fullName: firstSolve.player.fullName },
-      })),
+      })))
+      .sort((a, b) => a.problemCode.localeCompare(b.problemCode) || a.player.username.localeCompare(b.player.username)),
     problems: contest.problems
       .sort((a, b) => a.sortOrder - b.sortOrder || a.code.localeCompare(b.code))
       .map((problem) => ({
         id: problem.id,
         code: problem.code,
         title: problem.title,
+        points: problem.points,
         sortOrder: problem.sortOrder,
         firstSolves: problem.firstSolves.map((firstSolve) => ({
           id: firstSolve.id,
@@ -71,8 +71,11 @@ function toContestView(contest: ContestWithEntries): ContestView {
         year: entry.player.year,
         rank: entry.rank,
         solved: entry.solved,
+        solveVector: entry.solveVector,
+        solvedProblems: entry.solvedProblems,
         penalty: entry.penalty,
         rawScore: entry.rawScore,
+        contestScore: entry.contestScore,
         bonusPoints: entry.bonusPoints,
         finalScore: entry.finalScore,
         firstSolves: entry.firstSolves,
@@ -83,7 +86,6 @@ function toContestView(contest: ContestWithEntries): ContestView {
 const contestInclude = {
   standings: { include: { player: true } },
   coordinators: true,
-  firstSolvesRows: { include: { player: true } },
   problems: { include: { firstSolves: { include: { player: true } } } },
 };
 
@@ -168,7 +170,7 @@ export async function yearlyLeaderboard(year: number) {
 
 export async function getPlayer(username: string) {
   const player = await prisma.player.findUnique({
-    where: { username },
+    where: { username: username.toLowerCase() },
     include: {
       standings: {
         where: { contest: { standingsFinalizedAt: { not: null } } },
@@ -177,7 +179,7 @@ export async function getPlayer(username: string) {
       },
       ratingHistory: { orderBy: { createdAt: "asc" } },
       achievements: { orderBy: { earnedAt: "desc" } },
-      firstSolveRows: { include: { contest: true }, orderBy: { timestamp: "desc" } },
+      firstSolveRows: { include: { problem: { include: { contest: true } } }, orderBy: { createdAt: "desc" } },
       participations: { include: { contest: true }, orderBy: { contest: { startTime: "desc" } } },
     },
   });
@@ -204,7 +206,12 @@ export async function getPlayer(username: string) {
     participations: player.participations,
     ratings: player.ratingHistory,
     achievements: player.achievements,
-    firstSolveHistory: player.firstSolveRows,
+    firstSolveHistory: player.firstSolveRows.map((firstSolve) => ({
+      id: firstSolve.id,
+      problemCode: firstSolve.problem.code,
+      pointsAwarded: firstSolve.problem.points,
+      contest: firstSolve.problem.contest,
+    })),
     winrate: player.contestsPlayed ? Number(((player.wins / player.contestsPlayed) * 100).toFixed(1)) : 0,
     ratingDeltaHistory: player.ratingHistory.map((rating) => ({ contestId: rating.contestId, delta: rating.delta, rating: rating.rating, createdAt: rating.createdAt.toISOString() })),
   };

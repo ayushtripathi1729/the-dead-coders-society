@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { ContestCarousel } from "@/components/contest-carousel";
 import { ArenaBackground } from "@/components/arena-background";
 import { Nav } from "@/components/nav";
@@ -10,7 +11,7 @@ export default async function ContestArchivePage() {
   const groups = [
     ["Live Contests", contests.filter((contest) => contest.status === "LIVE")],
     ["Upcoming Contests", contests.filter((contest) => contest.status === "UPCOMING")],
-    ["Past Contests", contests.filter((contest) => contest.status === "FINISHED")],
+    ["Past Contests", contests.filter((contest) => contest.status === "COMPLETED")],
   ] as const;
 
   return (
@@ -24,6 +25,11 @@ export default async function ContestArchivePage() {
           <h1 className="certificate-title mt-2 text-6xl">Contest Archive</h1>
           <p className="mt-3 max-w-2xl font-[family-name:var(--font-mono)] text-zinc-400">Upcoming arenas, live battles, and completed championship records.</p>
         </section>
+        <nav className="mt-5 flex flex-wrap gap-3">
+          <Link className="upload-action-button" href="/contests/upcoming">Upcoming</Link>
+          <Link className="upload-action-button" href="/contests/live">Live</Link>
+          <Link className="upload-action-button" href="/contests/archive">Past</Link>
+        </nav>
         {groups.map(([title, items]) => (
           <section key={title} className="mt-5">
             <h2 className="certificate-title text-3xl text-[#9AFF00]">{title}</h2>

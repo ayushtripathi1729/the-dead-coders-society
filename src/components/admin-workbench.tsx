@@ -11,10 +11,17 @@ import { formatDateUTC } from "@/lib/utils";
 
 type ActivityLogView = { id: string; action: string; entity: string; entityId: string | null; createdAt: string };
 type CoordinatorDraft = { name: string; role: string; email: string; phone: string; discord: string };
-type ProblemDraft = { code: string; title: string; firstSolveUsernames: string[] };
+type ProblemDraft = { code: string; title: string; points: number; firstSolveUsernames: string[] };
 
 const emptyCoordinator: CoordinatorDraft = { name: "", role: "", email: "", phone: "", discord: "" };
-const emptyProblem: ProblemDraft = { code: "A", title: "", firstSolveUsernames: [] };
+function defaultProblems(count = 5): ProblemDraft[] {
+  return Array.from({ length: count }, (_, index) => ({
+    code: nextProblemCode(index),
+    title: "",
+    points: (index + 1) * 100,
+    firstSolveUsernames: [],
+  }));
+}
 
 function coordinatorDrafts(contest?: ContestView): CoordinatorDraft[] {
   return contest?.coordinators.length
@@ -33,9 +40,10 @@ function problemDrafts(contest?: ContestView): ProblemDraft[] {
     ? contest.problems.map((problem) => ({
         code: problem.code,
         title: problem.title ?? "",
+        points: problem.points,
         firstSolveUsernames: problem.firstSolves.map((firstSolve) => firstSolve.player.username),
       }))
-    : [{ ...emptyProblem }];
+    : defaultProblems();
 }
 
 export function AdminWorkbench({ contests, activityLogs }: { contests: ContestView[]; activityLogs: ActivityLogView[] }) {
@@ -87,6 +95,7 @@ export function AdminWorkbench({ contests, activityLogs }: { contests: ContestVi
       try {
         const body: Record<string, unknown> = Object.fromEntries(new FormData(form).entries());
         body.coordinators = coordinators.filter((coordinator) => coordinator.name && coordinator.phone && coordinator.role);
+        if (!activeContest?.standingsFinalizedAt) body.problems = problems;
         const payload = await submitJson(id ? `/api/admin/contests/${id}` : "/api/admin/contests", body, id ? "PATCH" : "POST");
         await refreshContests(payload.contest.id);
         setMessage(id ? "Contest updated. Refresh after final review to confirm public surfaces." : "Contest created. Upload assets or add standings next.");
@@ -100,7 +109,7 @@ export function AdminWorkbench({ contests, activityLogs }: { contests: ContestVi
     setSelectedContest("");
     setIsEditingContest(true);
     setCoordinators([{ ...emptyCoordinator }]);
-    setProblems([{ ...emptyProblem }]);
+    setProblems(defaultProblems());
   }
 
   function cancelContestEdit() {
@@ -127,12 +136,16 @@ export function AdminWorkbench({ contests, activityLogs }: { contests: ContestVi
           contestLink: contest.contestLink ?? "",
           startTime: contest.startTime,
           duration: contest.duration,
-          status: "UPCOMING",
           visibility: contest.visibility,
           scoringSystem: contest.scoringSystem,
           prizePool: contest.prizePool ?? "",
-          totalPoints: contest.totalPoints,
           coordinators: contest.coordinators.map(({ name, role, email, phone, discord }) => ({ name, role, email, phone, discord })),
+          problems: contest.problems.map((problem) => ({
+            code: problem.code,
+            title: problem.title ?? "",
+            points: problem.points,
+            firstSolveUsernames: [],
+          })),
         });
         await refreshContests(payload.contest.id);
         setMessage("Contest duplicated. Review dates, posters, standings, and first solves before publishing.");
@@ -189,12 +202,7 @@ export function AdminWorkbench({ contests, activityLogs }: { contests: ContestVi
                 <Field name="platform" placeholder="Organizer / group" defaultValue={activeContest?.platform ?? "Codeforces"} disabled={Boolean(activeContest && !isEditingContest)} />
                 <Field name="startTime" type="datetime-local" defaultValue={toLocalInput(activeContest?.startTime)} disabled={Boolean(activeContest && !isEditingContest)} required />
                 <Field name="duration" type="number" min={1} placeholder="Duration" defaultValue={activeContest?.duration ?? 120} disabled={Boolean(activeContest && !isEditingContest)} />
-                <Field name="totalPoints" type="number" min={1} placeholder="Total points" defaultValue={activeContest?.totalPoints ?? 1000} disabled={Boolean(activeContest && !isEditingContest)} />
-                <select name="status" className="terminal-field clip-arena min-w-0 px-4 py-3 font-[family-name:var(--font-mono)] text-sm" defaultValue={activeContest?.status ?? "UPCOMING"} disabled={Boolean(activeContest && !isEditingContest)}>
-                  <option value="UPCOMING">Upcoming</option>
-                  <option value="LIVE">Live</option>
-                  <option value="FINISHED">Completed</option>
-                </select>
+                <Field type="number" min={1} max={26} placeholder="Number of problems" value={problems.length} disabled={Boolean(activeContest && (!isEditingContest || activeContest.standingsFinalizedAt))} onChange={(event) => setProblemCount(Number(event.target.value), problems, setProblems)} />
                 <select name="visibility" className="terminal-field clip-arena min-w-0 px-4 py-3 font-[family-name:var(--font-mono)] text-sm" defaultValue={activeContest?.visibility ?? "PUBLIC"} disabled={Boolean(activeContest && !isEditingContest)}>
                   <option value="PUBLIC">Public</option>
                   <option value="PRIVATE">Private</option>
@@ -203,6 +211,8 @@ export function AdminWorkbench({ contests, activityLogs }: { contests: ContestVi
                 <Field name="contestLink" placeholder="Official contest link" defaultValue={activeContest?.contestLink ?? ""} disabled={Boolean(activeContest && !isEditingContest)} />
                 <Field name="prizePool" placeholder="Prize title" defaultValue={activeContest?.prizePool ?? ""} disabled={Boolean(activeContest && !isEditingContest)} />
               </div>
+
+              <ContestProblemSetup problems={problems} setProblems={setProblems} disabled={Boolean(activeContest && (!isEditingContest || activeContest.standingsFinalizedAt))} />
 
               <textarea name="description" placeholder="Contest description" rows={4} defaultValue={activeContest?.description} disabled={Boolean(activeContest && !isEditingContest)} className="terminal-field clip-arena min-w-0 resize-y px-4 py-3 font-[family-name:var(--font-mono)] text-sm" />
 
@@ -254,7 +264,7 @@ export function AdminWorkbench({ contests, activityLogs }: { contests: ContestVi
                 }}
               >
                 <input type="hidden" name="contestId" value={selectedContest} />
-                <textarea name="standingsText" rows={8} placeholder={"Full Name, username, penalty, solved\nAda Lovelace, ada_01, 120, 5"} className="terminal-field clip-arena min-w-0 resize-y px-4 py-3 font-[family-name:var(--font-mono)] text-sm" />
+                <textarea name="standingsText" rows={8} placeholder={"Full Name, username, penalty, solve vector\nAda Lovelace, ada_01, 120, [1,1,0,1,0]"} className="terminal-field clip-arena min-w-0 resize-y px-4 py-3 font-[family-name:var(--font-mono)] text-sm" />
                 <Button type="submit" disabled={!selectedContest || isPending || Boolean(activeContest?.standingsFinalizedAt)}>{isPending ? "Processing..." : "Save Draft Standings"}</Button>
               </form>
               <form
@@ -302,7 +312,7 @@ export function AdminWorkbench({ contests, activityLogs }: { contests: ContestVi
                 <Operation label="Entries" value={activeContest?.entries.length ?? 0} />
                 <Operation label="Status" value={activeContest?.status ?? "N/A"} />
                 <Operation label="Starts" value={activeContest ? formatDateUTC(activeContest.startTime) : "N/A"} />
-                <Operation label="Base points" value={activeContest?.totalPoints ?? "N/A"} />
+                <Operation label="Total contest points" value={activeContest?.totalPoints ?? "N/A"} />
                 <Operation label="Finalized" value={activeContest?.standingsFinalizedAt ? "YES" : "NO"} />
                 <Operation label="Last updated" value={activeContest ? formatDateUTC(activeContest.updatedAt) : "N/A"} />
               </div>
@@ -317,7 +327,7 @@ export function AdminWorkbench({ contests, activityLogs }: { contests: ContestVi
                     disabled={isPending || Boolean(activeContest.standingsFinalizedAt)}
                     onClick={() => saveProblems(activeContest.id, problems, submitJson, setMessage, startTransition, refreshContests)}
                   >
-                    <Save className="size-4" /> Save First Solves
+                    <Save className="size-4" /> Save Problems & First Solves
                   </Button>
                 </div>
               ) : <Empty>Select a contest to manage first solves.</Empty>}
@@ -527,15 +537,43 @@ function CoordinatorEditor({ coordinators, setCoordinators, disabled = false }: 
   );
 }
 
+function ContestProblemSetup({ problems, setProblems, disabled }: { problems: ProblemDraft[]; setProblems: (problems: ProblemDraft[]) => void; disabled: boolean }) {
+  const totalPoints = problems.reduce((sum, problem) => sum + problem.points, 0);
+
+  return (
+    <div className="grid gap-3 border border-[#9AFF00]/15 bg-black/30 p-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="font-[family-name:var(--font-display)] text-sm uppercase text-white">Contest Problems</p>
+        <p className="font-[family-name:var(--font-display)] text-[#9AFF00]">Total Contest Points: {totalPoints}</p>
+      </div>
+      <div className="grid gap-2">
+        {problems.map((problem, index) => (
+          <div key={`${problem.code}-${index}`} className="grid gap-2 sm:grid-cols-[100px_1fr]">
+            <Field value={`Problem ${problem.code}`} disabled />
+            <Field
+              type="number"
+              min={1}
+              value={problem.points}
+              disabled={disabled}
+              onChange={(event) => setProblems(problems.map((item, itemIndex) => itemIndex === index ? { ...item, points: Number(event.target.value) } : item))}
+              placeholder="Problem points"
+            />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function ProblemEditor({ problems, entries, setProblems, finalized }: { problems: ProblemDraft[]; entries: ContestEntryView[]; setProblems: (problems: ProblemDraft[]) => void; finalized: boolean }) {
   const [solverSearch, setSolverSearch] = useState<Record<number, string>>({});
 
-  function update(index: number, field: "code" | "title", value: string) {
-    setProblems(problems.map((problem, itemIndex) => itemIndex === index ? { ...problem, [field]: value } : problem));
+  function update(index: number, field: "code" | "title" | "points", value: string) {
+    setProblems(problems.map((problem, itemIndex) => itemIndex === index ? { ...problem, [field]: field === "points" ? Number(value) : value } : problem));
   }
 
   function addFirstSolver(index: number, value: string) {
-    const username = value.replace(/^@/, "").split(/\s|-/)[0].trim();
+    const username = value.replace(/^@/, "").trim();
     if (!username) return;
     const participant = entries.find((entry) => entry.username.toLowerCase() === username.toLowerCase());
     if (!participant) return;
@@ -563,18 +601,19 @@ function ProblemEditor({ problems, entries, setProblems, finalized }: { problems
   return (
     <div className="grid gap-3">
       <div className="flex items-center justify-between gap-3">
-        <p className="font-[family-name:var(--font-display)] text-sm uppercase text-white">Problem First Solves</p>
-        <Button type="button" variant="ghost" disabled={finalized} onClick={() => setProblems([...problems, { code: nextProblemCode(problems.length), title: "", firstSolveUsernames: [] }])}><Plus className="size-4" /> Add Problem</Button>
+        <p className="font-[family-name:var(--font-display)] text-sm uppercase text-white">Problem List & First Solves</p>
+        <Button type="button" variant="ghost" disabled={finalized || problems.length >= 26} onClick={() => setProblems([...problems, { code: nextProblemCode(problems.length), title: "", points: (problems.length + 1) * 100, firstSolveUsernames: [] }])}><Plus className="size-4" /> Add Problem</Button>
       </div>
       {problems.map((problem, index) => (
         <div key={index} className="grid gap-3 border border-white/10 bg-black/35 p-3">
-          <div className="grid gap-2 sm:grid-cols-[80px_1fr_auto]">
+          <div className="grid gap-2 sm:grid-cols-[80px_120px_1fr_auto]">
             <Field placeholder="A" value={problem.code} disabled={finalized} onChange={(event) => update(index, "code", event.target.value)} />
+            <Field type="number" min={1} placeholder="Points" value={problem.points} disabled={finalized} onChange={(event) => update(index, "points", event.target.value)} />
             <Field placeholder="Problem title" value={problem.title} disabled={finalized} onChange={(event) => update(index, "title", event.target.value)} />
             <div className="flex gap-2">
               <Button type="button" variant="ghost" disabled={finalized || index === 0} className="h-10 px-3" onClick={() => moveProblem(index, -1)}><ArrowUp className="size-4" /></Button>
               <Button type="button" variant="ghost" disabled={finalized || index === problems.length - 1} className="h-10 px-3" onClick={() => moveProblem(index, 1)}><ArrowDown className="size-4" /></Button>
-              <Button type="button" variant="ghost" disabled={finalized} className="h-10 px-3" onClick={() => setProblems(problems.filter((_, itemIndex) => itemIndex !== index))}><Trash2 className="size-4" /></Button>
+              <Button type="button" variant="ghost" disabled={finalized || problems.length === 1} className="h-10 px-3" onClick={() => setProblems(problems.filter((_, itemIndex) => itemIndex !== index))}><Trash2 className="size-4" /></Button>
             </div>
           </div>
           <div className="grid gap-2">
@@ -582,7 +621,7 @@ function ProblemEditor({ problems, entries, setProblems, finalized }: { problems
             <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
               <Field
                 list={`first-solver-options-${index}`}
-                placeholder={entries.length ? "Search username or name" : "Add participants first"}
+                placeholder={entries.length ? "Search contest username" : "Add participants first"}
                 disabled={finalized || !entries.length}
                 value={solverSearch[index] ?? ""}
                 onChange={(event) => setSolverSearch((current) => ({ ...current, [index]: event.target.value }))}
@@ -596,7 +635,7 @@ function ProblemEditor({ problems, entries, setProblems, finalized }: { problems
               <datalist id={`first-solver-options-${index}`}>
                 {entries
                   .filter((entry) => !problem.firstSolveUsernames.includes(entry.username))
-                  .map((entry) => <option key={entry.username} value={`@${entry.username} - ${entry.fullName}`} />)}
+                  .map((entry) => <option key={entry.username} value={`@${entry.username}`} />)}
               </datalist>
               <Button type="button" variant="ghost" disabled={finalized || !entries.length} onClick={() => addFirstSolver(index, solverSearch[index] ?? "")}>Assign</Button>
             </div>
@@ -631,7 +670,7 @@ function EntryEditor({ contestId, finalized, entries, submitJson, setMessage, st
           const body = Object.fromEntries(new FormData(event.currentTarget).entries());
           startTransition(async () => {
             try {
-              await submitJson(`/api/admin/contests/${contestId}/entries`, { entries: [{ fullName: body.fullName, username: body.username, penalty: body.penalty, solved: body.solved }] });
+              await submitJson(`/api/admin/contests/${contestId}/entries`, { entries: [{ fullName: body.fullName, username: body.username, penalty: body.penalty, solveVector: body.solveVector }] });
               await refreshContests(contestId);
               form.reset();
               setMessage("Participant added and ledgers recalculated.");
@@ -644,7 +683,7 @@ function EntryEditor({ contestId, finalized, entries, submitJson, setMessage, st
         <Field name="fullName" placeholder="Full name" required />
         <Field name="username" placeholder="Username" required />
         <Field name="penalty" type="number" min={0} placeholder="Penalty" required />
-        <Field name="solved" type="number" min={0} placeholder="Solved" required />
+        <Field name="solveVector" placeholder="Solve vector: [1,1,0,1]" required />
         <Button type="submit" disabled={isPending || finalized}><Plus className="size-4" /> Add Participant</Button>
       </form>
       <div className="standings-table-wrap">
@@ -655,9 +694,12 @@ function EntryEditor({ contestId, finalized, entries, submitJson, setMessage, st
                 <th>Rank</th>
                 <th>Full Name</th>
                 <th>Username</th>
+                <th>Solve Vector</th>
                 <th>Solved</th>
+                <th>Solved Problems</th>
                 <th>Penalty</th>
-                <th>Base Score</th>
+                <th>Raw Score</th>
+                <th>Contest Score</th>
                 <th>Prize Bonus</th>
                 <th>Final Score</th>
                 <th>Actions</th>
@@ -676,13 +718,13 @@ function EntryEditor({ contestId, finalized, entries, submitJson, setMessage, st
 function EntryRow({ contestId, finalized, entry, submitJson, setMessage, startTransition, refreshContests, isPending }: { contestId: string; finalized: boolean; entry: ContestEntryView; submitJson: (endpoint: string, body: Record<string, unknown>, method?: string) => Promise<unknown>; setMessage: (message: string) => void; startTransition: (callback: () => void) => void; refreshContests: (id?: string) => Promise<void>; isPending: boolean }) {
   const [fullName, setFullName] = useState(entry.fullName);
   const [username, setUsername] = useState(entry.username);
-  const [solved, setSolved] = useState(String(entry.solved));
+  const [solveVector, setSolveVector] = useState(JSON.stringify(entry.solveVector));
   const [penalty, setPenalty] = useState(String(entry.penalty));
 
   function saveRow() {
     startTransition(async () => {
       try {
-        await submitJson(`/api/admin/contests/${contestId}/entries`, { standingId: entry.id, fullName, username, solved, penalty }, "PATCH");
+        await submitJson(`/api/admin/contests/${contestId}/entries`, { standingId: entry.id, fullName, username, solveVector, penalty }, "PATCH");
         await refreshContests(contestId);
         setMessage("Participant updated. Ranks and scores recalculated.");
       } catch (error) {
@@ -696,9 +738,12 @@ function EntryRow({ contestId, finalized, entry, submitJson, setMessage, startTr
       <td className="font-[family-name:var(--font-display)] text-[#9AFF00]">#{entry.rank}</td>
       <td><Field value={fullName} disabled={finalized} onChange={(event) => setFullName(event.target.value)} /></td>
       <td><Field value={username} disabled={finalized} onChange={(event) => setUsername(event.target.value)} /></td>
-      <td><Field type="number" min={0} value={solved} disabled={finalized} onChange={(event) => setSolved(event.target.value)} /></td>
+      <td><Field value={solveVector} disabled={finalized} onChange={(event) => setSolveVector(event.target.value)} /></td>
+      <td>{entry.solved}</td>
+      <td>{entry.solvedProblems.join(", ") || "None"}</td>
       <td><Field type="number" min={0} value={penalty} disabled={finalized} onChange={(event) => setPenalty(event.target.value)} /></td>
       <td>{entry.rawScore}</td>
+      <td>{entry.contestScore}</td>
       <td className="text-[#F3C55B]">+{entry.bonusPoints}</td>
       <td className="font-[family-name:var(--font-display)] text-[#9AFF00]">{entry.finalScore}</td>
       <td>
@@ -768,7 +813,7 @@ function deleteContest(id: string | undefined, submitJson: (endpoint: string, bo
 }
 
 function finalizeStandings(id: string, problems: ProblemDraft[], submitJson: (endpoint: string, body: Record<string, unknown>, method?: string) => Promise<unknown>, setMessage: (message: string) => void, startTransition: (callback: () => void) => void, refreshContests: (id?: string) => Promise<void>) {
-  if (!window.confirm("Have all participants been added? Finalized standings are locked to protect leaderboard integrity.")) return;
+  if (!window.confirm("Have all participants been entered?")) return;
   startTransition(async () => {
     try {
       const payloadProblems = problems
@@ -776,6 +821,7 @@ function finalizeStandings(id: string, problems: ProblemDraft[], submitJson: (en
         .map((problem) => ({
           code: problem.code.trim(),
           title: problem.title.trim(),
+          points: problem.points,
           firstSolveUsernames: problem.firstSolveUsernames,
         }));
       const response = await submitJson(`/api/admin/contests/${id}/entries`, { action: "finalize", problems: payloadProblems }, "PATCH") as { finalized?: boolean; rows?: number };
@@ -795,11 +841,12 @@ function saveProblems(id: string, problems: ProblemDraft[], submitJson: (endpoin
         .map((problem) => ({
           code: problem.code.trim(),
           title: problem.title.trim(),
+          points: problem.points,
           firstSolveUsernames: problem.firstSolveUsernames,
         }));
       await submitJson(`/api/admin/contests/${id}/entries`, { action: "saveProblems", problems: payloadProblems }, "PATCH");
       await refreshContests(id);
-      setMessage("Problem labels and first solves saved.");
+      setMessage("Problem points and first solves saved. Contest scores were recalculated.");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Unable to save first solves.");
     }
@@ -818,11 +865,9 @@ function contestPayload(contest: ContestView, overrides: Partial<ContestView> = 
     contestLink: next.contestLink ?? "",
     startTime: next.startTime,
     duration: next.duration,
-    status: next.status,
     visibility: next.visibility,
     scoringSystem: next.scoringSystem,
     prizePool: next.prizePool ?? "",
-    totalPoints: next.totalPoints,
     coordinators: next.coordinators.map(({ name, role, email, phone, discord }) => ({ name, role, email, phone, discord })),
   };
 }
@@ -855,4 +900,19 @@ function recalculateContest(id: string | undefined, submitJson: (endpoint: strin
 
 function nextProblemCode(index: number) {
   return String.fromCharCode("A".charCodeAt(0) + index);
+}
+
+function setProblemCount(count: number, problems: ProblemDraft[], setProblems: (problems: ProblemDraft[]) => void) {
+  const nextCount = Math.min(26, Math.max(1, count || 1));
+  if (nextCount <= problems.length) {
+    setProblems(problems.slice(0, nextCount));
+    return;
+  }
+  setProblems([
+    ...problems,
+    ...Array.from({ length: nextCount - problems.length }, (_, index) => {
+      const problemIndex = problems.length + index;
+      return { code: nextProblemCode(problemIndex), title: "", points: (problemIndex + 1) * 100, firstSolveUsernames: [] };
+    }),
+  ]);
 }

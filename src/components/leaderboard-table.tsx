@@ -7,7 +7,8 @@ type Props =
   | { type: "contest"; rows: ContestEntry[] }
   | { type: "aggregate"; rows: LeaderboardRow[] };
 
-const headings = ["Rank", "Full Name", "Username", "Year", "Total Score", "Contests", "Wins", "Solved", "First Solves", "Average Placement"];
+const aggregateHeadings = ["Rank", "Full Name", "Username", "Year", "Total Score", "Contests", "Wins", "Solved", "First Solves", "Average Placement"];
+const contestHeadings = ["Rank", "Full Name", "Username", "Year", "Solved", "Solved Problems", "Penalty", "Raw Score", "Contest Score", "Bonus", "Final Score", "First Solves"];
 
 export function LeaderboardTable(props: Props) {
   const rows =
@@ -18,13 +19,19 @@ export function LeaderboardTable(props: Props) {
           username: row.username,
           year: row.year,
           totalScore: row.finalScore,
+          rawScore: row.rawScore,
+          contestScore: row.contestScore,
+          bonusPoints: row.bonusPoints,
+          penalty: row.penalty,
           contests: 1,
           wins: row.rank === 1 ? 1 : 0,
           solved: row.solved,
+          solvedProblems: row.solvedProblems,
           firstSolves: row.firstSolves,
           averagePlacement: row.rank,
         }))
-      : props.rows;
+      : props.rows.map((row) => ({ ...row, rawScore: null, contestScore: null, bonusPoints: null, solvedProblems: [] }));
+  const headings = props.type === "contest" ? contestHeadings : aggregateHeadings;
 
   return (
     <div className="tournament-board overflow-hidden">
@@ -61,12 +68,27 @@ export function LeaderboardTable(props: Props) {
                   </Link>
                 </td>
                 <td className="px-4 py-3 text-zinc-300">{yearLabel(row.year ?? 1)}</td>
-                <td className="px-4 py-3 font-[family-name:var(--font-display)] text-lg font-bold text-[#9AFF00] drop-shadow-[0_0_10px_#9AFF00]">{row.totalScore}</td>
-                <td className="px-4 py-3">{row.contests}</td>
-                <td className="px-4 py-3 text-[#F3C55B]">{row.wins}</td>
-                <td className="px-4 py-3">{row.solved}</td>
-                <td className="px-4 py-3 text-[#8E2BFF]">{row.firstSolves}</td>
-                <td className="px-4 py-3">{row.averagePlacement}</td>
+                {props.type === "contest" ? (
+                  <>
+                    <td className="px-4 py-3">{row.solved}</td>
+                    <td className="px-4 py-3">{row.solvedProblems.join(", ") || "None"}</td>
+                    <td className="px-4 py-3">{row.penalty}</td>
+                    <td className="px-4 py-3">{row.rawScore}</td>
+                    <td className="px-4 py-3">{row.contestScore}</td>
+                    <td className="px-4 py-3 text-[#F3C55B]">+{row.bonusPoints}</td>
+                    <td className="px-4 py-3 font-[family-name:var(--font-display)] text-lg font-bold text-[#9AFF00] drop-shadow-[0_0_10px_#9AFF00]">{row.totalScore}</td>
+                    <td className="px-4 py-3 text-[#8E2BFF]">{row.firstSolves}</td>
+                  </>
+                ) : (
+                  <>
+                    <td className="px-4 py-3 font-[family-name:var(--font-display)] text-lg font-bold text-[#9AFF00] drop-shadow-[0_0_10px_#9AFF00]">{row.totalScore}</td>
+                    <td className="px-4 py-3">{row.contests}</td>
+                    <td className="px-4 py-3 text-[#F3C55B]">{row.wins}</td>
+                    <td className="px-4 py-3">{row.solved}</td>
+                    <td className="px-4 py-3 text-[#8E2BFF]">{row.firstSolves}</td>
+                    <td className="px-4 py-3">{row.averagePlacement}</td>
+                  </>
+                )}
               </tr>
             ))}
           </tbody>

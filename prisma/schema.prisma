@@ -8,12 +8,6 @@ datasource db {
   directUrl = env("DIRECT_URL")
 }
 
-enum ContestStatus {
-  UPCOMING
-  LIVE
-  FINISHED
-}
-
 enum ContestVisibility {
   PUBLIC
   PRIVATE
@@ -80,7 +74,6 @@ model Player {
   uploads         UploadAsset[]
   certificates    Certificate[]
   firstSolveRows  FirstSolve[]
-  problemFirstSolves ProblemFirstSolve[]
 
   @@index([currentRating])
   @@index([year])
@@ -100,11 +93,10 @@ model Contest {
   contestLink    String?
   startTime      DateTime
   duration       Int                    @default(120)
-  status         ContestStatus          @default(UPCOMING)
   visibility     ContestVisibility      @default(PUBLIC)
   scoringSystem  String                 @default("TDCS_ELO_V1")
   prizePool      String?
-  totalPoints    Int                    @default(1000)
+  totalPoints    Int                    @default(0)
   standingsFinalizedAt DateTime?
   createdById    String?
   createdAt      DateTime               @default(now())
@@ -117,10 +109,8 @@ model Contest {
   ratingHistory  RatingHistory[]
   certificates   Certificate[]
   coordinators   ContestCoordinator[]
-  firstSolvesRows FirstSolve[]
   problems       ContestProblem[]
 
-  @@index([status, startTime])
   @@index([visibility, startTime])
   @@index([createdById])
 }
@@ -130,26 +120,27 @@ model ContestProblem {
   contestId   String
   code        String
   title       String?
+  points      Int
   sortOrder   Int                 @default(0)
   createdAt   DateTime            @default(now())
   updatedAt   DateTime            @updatedAt
   contest     Contest             @relation(fields: [contestId], references: [id], onDelete: Cascade)
-  firstSolves ProblemFirstSolve[]
+  firstSolves FirstSolve[]
 
   @@unique([contestId, code])
   @@index([contestId, sortOrder])
 }
 
-model ProblemFirstSolve {
-  id        String         @id @default(cuid())
-  problemId String
-  playerId  String
-  createdAt DateTime       @default(now())
-  problem   ContestProblem @relation(fields: [problemId], references: [id], onDelete: Cascade)
-  player    Player         @relation(fields: [playerId], references: [id], onDelete: Cascade)
+model FirstSolve {
+  id             String         @id @default(cuid())
+  problemId      String
+  playerUsername String
+  createdAt      DateTime       @default(now())
+  problem        ContestProblem @relation(fields: [problemId], references: [id], onDelete: Cascade)
+  player         Player         @relation(fields: [playerUsername], references: [username], onDelete: Cascade)
 
-  @@unique([problemId, playerId])
-  @@index([playerId, createdAt])
+  @@unique([problemId, playerUsername])
+  @@index([playerUsername, createdAt])
 }
 
 model ContestCoordinator {
@@ -167,141 +158,132 @@ model ContestCoordinator {
   @@index([contestId])
 }
 
-model FirstSolve {
-  id            String   @id @default(cuid())
-  contestId     String
-  problemCode   String
-  playerId      String
-  timestamp     DateTime
-  pointsAwarded Int      @default(0)
-  createdAt     DateTime @default(now())
-  contest       Contest  @relation(fields: [contestId], references: [id], onDelete: Cascade)
-  player        Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
-
-  @@unique([contestId, problemCode, playerId])
-  @@index([contestId, timestamp])
-  @@index([playerId, timestamp])
-}
-
 model ContestParticipation {
-  id          String   @id @default(cuid())
-  contestId   String
-  playerId    String
-  joinedAt    DateTime @default(now())
-  finalRank   Int?
-  finalScore  Int      @default(0)
-  solved      Int      @default(0)
-  penalty     Int      @default(0)
-  ratingDelta Int      @default(0)
-  contest     Contest  @relation(fields: [contestId], references: [id], onDelete: Cascade)
-  player      Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  id             String   @id @default(cuid())
+  contestId      String
+  playerUsername String
+  joinedAt       DateTime @default(now())
+  finalRank      Int?
+  finalScore     Int      @default(0)
+  solved         Int      @default(0)
+  solveVector    Int[]    @default([])
+  solvedProblems String[] @default([])
+  rawScore       Int      @default(0)
+  contestScore   Int      @default(0)
+  penalty        Int      @default(0)
+  ratingDelta    Int      @default(0)
+  contest        Contest  @relation(fields: [contestId], references: [id], onDelete: Cascade)
+  player         Player   @relation(fields: [playerUsername], references: [username], onDelete: Cascade)
 
-  @@unique([contestId, playerId])
-  @@index([playerId, joinedAt])
+  @@unique([contestId, playerUsername])
+  @@index([playerUsername, joinedAt])
   @@index([contestId, finalRank])
 }
 
 model ContestStanding {
-  id          String   @id @default(cuid())
-  contestId   String
-  playerId    String
-  rank        Int
-  solved      Int
-  penalty     Int
-  rawScore    Int
-  bonusPoints Int      @default(0)
-  finalScore  Int
-  firstSolves Int      @default(0)
-  notes       String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  contest     Contest  @relation(fields: [contestId], references: [id], onDelete: Cascade)
-  player      Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  id             String   @id @default(cuid())
+  contestId      String
+  playerUsername String
+  rank           Int
+  solved         Int
+  solveVector    Int[]    @default([])
+  solvedProblems String[] @default([])
+  penalty        Int
+  rawScore       Int
+  contestScore   Int
+  bonusPoints    Int      @default(0)
+  finalScore     Int
+  firstSolves    Int      @default(0)
+  notes          String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  contest        Contest  @relation(fields: [contestId], references: [id], onDelete: Cascade)
+  player         Player   @relation(fields: [playerUsername], references: [username], onDelete: Cascade)
 
-  @@unique([contestId, playerId])
+  @@unique([contestId, playerUsername])
   @@index([rank])
   @@index([contestId, rank])
-  @@index([playerId, finalScore])
+  @@index([playerUsername, finalScore])
 }
 
 model Achievement {
-  id          String   @id @default(cuid())
-  playerId    String
-  title       String
-  description String?
-  earnedAt    DateTime @default(now())
-  player      Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  id             String   @id @default(cuid())
+  playerUsername String
+  title          String
+  description    String?
+  earnedAt       DateTime @default(now())
+  player         Player   @relation(fields: [playerUsername], references: [username], onDelete: Cascade)
 
-  @@index([playerId, earnedAt])
+  @@index([playerUsername, earnedAt])
 }
 
 model HallOfFame {
-  id            String   @id @default(cuid())
-  playerId      String
-  contestId     String?
-  title         String
-  score         Int      @default(0)
-  badges        String   @default("[]")
-  specialTitles String   @default("[]")
-  awardedAt     DateTime @default(now())
-  player        Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
-  contest       Contest? @relation(fields: [contestId], references: [id], onDelete: SetNull)
+  id             String   @id @default(cuid())
+  playerUsername String
+  contestId      String?
+  title          String
+  score          Int      @default(0)
+  badges         String   @default("[]")
+  specialTitles  String   @default("[]")
+  awardedAt      DateTime @default(now())
+  player         Player   @relation(fields: [playerUsername], references: [username], onDelete: Cascade)
+  contest        Contest? @relation(fields: [contestId], references: [id], onDelete: SetNull)
 
   @@index([awardedAt])
-  @@index([playerId])
+  @@index([playerUsername])
 }
 
 model MonthlyLeaderboard {
-  id          String   @id @default(cuid())
-  playerId    String
-  year        Int
-  month       Int
-  rank        Int
-  totalScore  Int
-  contests    Int
-  wins        Int
-  solved      Int
-  firstSolves Int
-  averageRank Float?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  player      Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  id             String   @id @default(cuid())
+  playerUsername String
+  year           Int
+  month          Int
+  rank           Int
+  totalScore     Int
+  contests       Int
+  wins           Int
+  solved         Int
+  firstSolves    Int
+  averageRank    Float?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  player         Player   @relation(fields: [playerUsername], references: [username], onDelete: Cascade)
 
-  @@unique([playerId, year, month])
+  @@unique([playerUsername, year, month])
   @@index([year, month, rank])
 }
 
 model YearlyLeaderboard {
-  id          String   @id @default(cuid())
-  playerId    String
-  year        Int
-  rank        Int
-  totalScore  Int
-  contests    Int
-  wins        Int
-  solved      Int
-  firstSolves Int
-  averageRank Float?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  player      Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  id             String   @id @default(cuid())
+  playerUsername String
+  year           Int
+  rank           Int
+  totalScore     Int
+  contests       Int
+  wins           Int
+  solved         Int
+  firstSolves    Int
+  averageRank    Float?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  player         Player   @relation(fields: [playerUsername], references: [username], onDelete: Cascade)
 
-  @@unique([playerId, year])
+  @@unique([playerUsername, year])
   @@index([year, rank])
 }
 
 model RatingHistory {
-  id        String   @id @default(cuid())
-  playerId  String
-  contestId String?
-  rating    Int
-  delta     Int
-  reason    String?
-  createdAt DateTime @default(now())
-  player    Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
-  contest   Contest? @relation(fields: [contestId], references: [id], onDelete: SetNull)
+  id             String   @id @default(cuid())
+  playerUsername String
+  contestId      String?
+  rating         Int
+  delta          Int
+  reason         String?
+  createdAt      DateTime @default(now())
+  player         Player   @relation(fields: [playerUsername], references: [username], onDelete: Cascade)
+  contest        Contest? @relation(fields: [contestId], references: [id], onDelete: SetNull)
 
-  @@index([playerId, createdAt])
+  @@index([playerUsername, createdAt])
   @@index([contestId])
 }
 
@@ -327,28 +309,28 @@ model UploadAsset {
   publicId  String?
   provider  String          @default("cloudinary")
   contestId String?
-  playerId  String?
+  playerUsername String?
   createdAt DateTime        @default(now())
   contest   Contest?        @relation(fields: [contestId], references: [id], onDelete: Cascade)
-  player    Player?         @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  player    Player?         @relation(fields: [playerUsername], references: [username], onDelete: Cascade)
 
   @@index([kind, createdAt])
   @@index([contestId])
-  @@index([playerId])
+  @@index([playerUsername])
 }
 
 model Certificate {
   id        String          @id @default(cuid())
   type      CertificateType
   title     String
-  playerId  String?
+  playerUsername String?
   contestId String?
   assetUrl  String?
   issuedAt  DateTime        @default(now())
   metadata  Json?
-  player    Player?         @relation(fields: [playerId], references: [id], onDelete: SetNull)
+  player    Player?         @relation(fields: [playerUsername], references: [username], onDelete: SetNull)
   contest   Contest?        @relation(fields: [contestId], references: [id], onDelete: SetNull)
 
-  @@index([playerId, issuedAt])
+  @@index([playerUsername, issuedAt])
   @@index([contestId, issuedAt])
 }

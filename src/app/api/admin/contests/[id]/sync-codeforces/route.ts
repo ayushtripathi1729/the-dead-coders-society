@@ -13,7 +13,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   const standingsUrl = String(body.standingsUrl ?? "");
   try {
     const entries = await fetchCodeforcesStandings(standingsUrl);
-    await upsertContestEntries(id, entries, admin.id);
+    await upsertContestEntries(id, entries, admin.id, { allowExisting: true });
     await prisma.contest.update({ where: { id }, data: { contestLink: standingsUrl } });
     return NextResponse.json({ ok: true, imported: entries.length });
   } catch (error) {
