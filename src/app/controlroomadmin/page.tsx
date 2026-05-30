@@ -1,4 +1,5 @@
 import { LockKeyhole, ShieldCheck } from "lucide-react";
+import type { Prisma } from "@prisma/client";
 import { auth } from "@/auth";
 import { adminSignIn, adminSignOut } from "@/actions/auth-actions";
 import { AdminWorkbench } from "@/components/admin-workbench";
@@ -9,19 +10,22 @@ import { Button } from "@/components/ui/button";
 
 export const dynamic = "force-dynamic";
 
+type ActivityLogSelect = Prisma.ActivityLogGetPayload<{ select: { id: true; action: true; entity: true; entityId: true; createdAt: true } }>;
+type PlayerSelect = Prisma.PlayerGetPayload<{ select: { id: true; fullName: true; username: true; year: true; email: true; branchCourse: true; avatar: true; bio: true } }>;
+
 export default async function ControlRoomAdminPage({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
   const params = await searchParams;
   const session = await auth();
   const isAuthed = session?.user?.role === "ADMIN";
   const contests = isAuthed ? await listContests({ includeHidden: true }) : [];
-  const activityLogs = isAuthed
+  const activityLogs: ActivityLogSelect[] = isAuthed
     ? await prisma.activityLog.findMany({
         orderBy: { createdAt: "desc" },
         take: 12,
         select: { id: true, action: true, entity: true, entityId: true, createdAt: true },
       })
     : [];
-  const players = isAuthed
+  const players: PlayerSelect[] = isAuthed
     ? await prisma.player.findMany({
         orderBy: [{ fullName: "asc" }, { username: "asc" }],
         select: { id: true, fullName: true, username: true, year: true, email: true, branchCourse: true, avatar: true, bio: true },
@@ -71,7 +75,7 @@ export default async function ControlRoomAdminPage({ searchParams }: { searchPar
             </form>
             <AdminWorkbench
               contests={contests}
-              activityLogs={activityLogs.map((log) => ({ ...log, createdAt: log.createdAt.toISOString() }))}
+              activityLogs={activityLogs.map((log: ActivityLogSelect) => ({ ...log, createdAt: log.createdAt.toISOString() }))}
               players={players}
             />
           </>
