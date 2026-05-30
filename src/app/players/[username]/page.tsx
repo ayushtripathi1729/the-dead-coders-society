@@ -9,15 +9,20 @@ import { getPlayer } from "@/lib/leaderboards";
 
 export const dynamic = "force-dynamic";
 
+type ChartPoint = { contest: string; score: number };
+
 export default async function PlayerPage({ params }: { params: Promise<{ username: string }> }) {
   const { username } = await params;
   const player = await getPlayer(decodeURIComponent(username));
   if (!player) notFound();
 
-  const scoreChart = player.history.slice().reverse().reduce<{ contest: string; score: number }[]>((chart, { contest, entry }) => [
-    ...chart,
-    { contest: contest.title.slice(0, 14), score: (chart.at(-1)?.score ?? 0) + entry.finalScore },
-  ], []);
+  const scoreChart = player.history
+    .slice()
+    .reverse()
+    .reduce((chart: ChartPoint[], { contest, entry }): ChartPoint[] => [
+      ...chart,
+      { contest: contest.title.slice(0, 14), score: (chart.at(-1)?.score ?? 0) + entry.finalScore },
+    ], []);
   const ratingChart = player.ratings.length
     ? player.ratings.map((rating, index) => ({ contest: `R${index + 1}`, score: rating.rating }))
     : [{ contest: "Base", score: player.rating }];
