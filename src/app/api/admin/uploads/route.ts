@@ -6,8 +6,8 @@ import { deleteFromCloudinary, uploadToCloudinary, type CloudinaryUploadFolder }
 
 const uploadSchema = z.object({
   kind: z.enum(["POSTER", "INVITE_POSTER", "BANNER", "CERTIFICATE", "PROFILE_IMAGE", "LOGO", "EDITORIAL"]),
-  contestId: z.string().optional(),
-  playerUsername: z.string().optional(),
+  contestId: z.string().trim().min(1).optional(),
+  playerUsername: z.string().trim().min(1).max(48).regex(/^[a-zA-Z0-9_.+-]+$/).optional(),
 });
 
 const allowedImageTypes = new Set(["image/jpeg", "image/png", "image/webp"]);
@@ -29,6 +29,23 @@ function friendlyUploadError(error: unknown) {
   return "Upload failed. Please try again.";
 }
 
+async function resolveUploadReferences(parsed: z.infer<typeof uploadSchema>) {
+  let playerUsername = parsed.playerUsername;
+  if (parsed.contestId) {
+    const contest = await prisma.contest.findUnique({ where: { id: parsed.contestId }, select: { id: true } });
+    if (!contest) throw new Error("Contest not found for this upload.");
+  }
+  if (playerUsername) {
+    const player = await prisma.player.findFirst({
+      where: { username: { equals: playerUsername, mode: "insensitive" } },
+      select: { username: true },
+    });
+    if (!player) throw new Error("Player not found for this upload.");
+    playerUsername = player.username;
+  }
+  return { ...parsed, playerUsername };
+}
+
 export async function POST(request: NextRequest) {
   const admin = await requireAdmin(request);
   if (!admin) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -37,11 +54,11 @@ export async function POST(request: NextRequest) {
     const formData = await request.formData();
     const file = formData.get("file");
     if (!(file instanceof File)) return NextResponse.json({ error: "Upload file is required." }, { status: 400 });
-    const parsed = uploadSchema.parse({
+    const parsed = await resolveUploadReferences(uploadSchema.parse({
       kind: formData.get("kind"),
       contestId: formData.get("contestId") || undefined,
       playerUsername: formData.get("playerUsername") || undefined,
-    });
+    }));
 
     const allowsPdf = parsed.kind === "CERTIFICATE";
     if (!allowedImageTypes.has(file.type) && !(allowsPdf && file.type === "application/pdf")) {

@@ -8,8 +8,8 @@ import { uploadDataUriToCloudinary } from "@/server/uploads/cloudinary";
 const certificateSchema = z.object({
   type: z.enum(["PARTICIPATION", "WINNER", "CONTEST"]),
   title: z.string().min(2).max(140),
-  playerUsername: z.string().optional(),
-  contestId: z.string().optional(),
+  playerUsername: z.string().trim().min(1).max(48).regex(/^[a-zA-Z0-9_.+-]+$/).optional(),
+  contestId: z.string().trim().min(1).optional(),
 });
 
 export async function POST(request: NextRequest) {
@@ -19,9 +19,11 @@ export async function POST(request: NextRequest) {
   try {
     const input = certificateSchema.parse(await readBody(request));
     const [player, contest] = await Promise.all([
-      input.playerUsername ? prisma.player.findUnique({ where: { username: input.playerUsername } }) : null,
+      input.playerUsername ? prisma.player.findFirst({ where: { username: { equals: input.playerUsername, mode: "insensitive" } } }) : null,
       input.contestId ? prisma.contest.findUnique({ where: { id: input.contestId } }) : null,
     ]);
+    if (input.playerUsername && !player) throw new Error("Player not found.");
+    if (input.contestId && !contest) throw new Error("Contest not found.");
 
     const recipient = player?.fullName ?? "The Dead Coders Society";
     const subtitle = contest?.title ?? "Official Championship Record";
@@ -33,7 +35,7 @@ export async function POST(request: NextRequest) {
       data: {
         type: input.type,
         title: input.title,
-        playerUsername: input.playerUsername,
+        playerUsername: player?.username,
         contestId: input.contestId,
         assetUrl: uploaded.url,
       },

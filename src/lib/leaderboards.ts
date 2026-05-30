@@ -173,14 +173,22 @@ export async function getPlayer(username: string) {
     where: { username: username.toLowerCase() },
     include: {
       standings: {
-        where: { contest: { standingsFinalizedAt: { not: null } } },
+        where: { contest: { standingsFinalizedAt: { not: null }, visibility: { not: "PRIVATE" } } },
         include: { contest: true },
         orderBy: { contest: { startTime: "desc" } },
       },
       ratingHistory: { orderBy: { createdAt: "asc" } },
       achievements: { orderBy: { earnedAt: "desc" } },
-      firstSolveRows: { include: { problem: { include: { contest: true } } }, orderBy: { createdAt: "desc" } },
-      participations: { include: { contest: true }, orderBy: { contest: { startTime: "desc" } } },
+      firstSolveRows: {
+        where: { problem: { contest: { standingsFinalizedAt: { not: null }, visibility: { not: "PRIVATE" } } } },
+        include: { problem: { include: { contest: true } } },
+        orderBy: { createdAt: "desc" },
+      },
+      participations: {
+        where: { contest: { standingsFinalizedAt: { not: null }, visibility: { not: "PRIVATE" } } },
+        include: { contest: true },
+        orderBy: { contest: { startTime: "desc" } },
+      },
     },
   });
   if (!player) return null;

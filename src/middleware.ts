@@ -5,6 +5,7 @@ import { enforceSameOrigin, rateLimit } from "@/lib/security";
 export async function middleware(request: NextRequest) {
   const isAdminRoute = request.nextUrl.pathname.startsWith("/controlroomadmin");
   const isApiAdminRoute = request.nextUrl.pathname.startsWith("/api/admin");
+  const isAuthRoute = request.nextUrl.pathname.startsWith("/api/auth");
   const token = await getToken({
     req: request,
     secret: process.env.AUTH_SECRET ?? process.env.NEXTAUTH_SECRET,
@@ -32,9 +33,13 @@ export async function middleware(request: NextRequest) {
     }
   }
 
+  if (isAuthRoute && request.method === "POST" && !rateLimit(request, 10)) {
+    return NextResponse.json({ error: "Rate limit exceeded." }, { status: 429 });
+  }
+
   return NextResponse.next();
 }
 
 export const config = {
-  matcher: ["/controlroomadmin/:path*", "/api/admin/:path*"],
+  matcher: ["/controlroomadmin/:path*", "/api/admin/:path*", "/api/auth/:path*"],
 };

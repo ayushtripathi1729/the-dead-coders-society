@@ -32,7 +32,7 @@ export default async function ContestPage({ params }: { params: Promise<{ id: st
           <span className="corner corner-bl" />
           <span className="corner corner-br" />
           <div className="grid lg:grid-cols-[.95fr_1.05fr]">
-            <div className="relative min-h-96 bg-cover bg-center" style={{ backgroundImage: `linear-gradient(90deg,rgba(0,0,0,.08),rgba(0,0,0,.84)),url(${bannerPoster})` }}>
+            <div className="relative min-h-96 bg-cover bg-center" style={{ backgroundImage: `linear-gradient(90deg,rgba(0,0,0,.08),rgba(0,0,0,.84)),url(${JSON.stringify(bannerPoster)})` }}>
               <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,transparent,rgba(142,43,255,.3)_62%,rgba(0,0,0,.85))]" />
               <div className="absolute bottom-0 left-0 right-0 h-px bg-[#9AFF00] shadow-[0_0_24px_#9AFF00]" />
             </div>

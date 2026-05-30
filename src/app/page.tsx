@@ -38,15 +38,15 @@ export default async function Home() {
         <section className="poster-hero relative grid min-h-[calc(100vh-5rem)] overflow-hidden border border-[#8E2BFF]/60 lg:grid-cols-[1.05fr_.95fr]">
           <div className="absolute inset-0 bg-[linear-gradient(90deg,rgba(0,0,0,.88),rgba(0,0,0,.52),rgba(0,0,0,.9))]" />
           <div className="relative z-10 flex flex-col justify-center p-6 sm:p-10 lg:p-14">
-            <div className="inline-flex w-fit items-center gap-2 border border-[#9AFF00]/40 bg-black/70 px-4 py-2 font-[family-name:var(--font-display)] text-[10px] uppercase tracking-[0.28em] text-[#9AFF00]">
+            <div className="inline-flex max-w-full flex-wrap items-center gap-2 border border-[#9AFF00]/40 bg-black/70 px-4 py-2 font-[family-name:var(--font-display)] text-[10px] uppercase leading-relaxed tracking-[0.16em] text-[#9AFF00] sm:w-fit sm:tracking-[0.28em]">
               <Zap className="size-4" />
               Underground Coding Championship
             </div>
             <p className="certificate-title mt-6 text-3xl sm:text-5xl">THE</p>
-            <h1 data-text="DEAD CODERS" className="glitch certificate-title max-w-5xl text-6xl leading-none sm:text-8xl lg:text-[8.8rem]">DEAD CODERS</h1>
-            <p className="certificate-title text-5xl leading-none text-[#9AFF00] sm:text-7xl">SOCIETY</p>
+            <h1 data-text="DEAD CODERS" className="glitch certificate-title max-w-full text-5xl leading-none tracking-[0.06em] sm:max-w-5xl sm:text-8xl sm:tracking-[0.14em] lg:text-[8.8rem]">DEAD CODERS</h1>
+            <p className="certificate-title text-4xl leading-none tracking-[0.08em] text-[#9AFF00] sm:text-7xl sm:tracking-[0.14em]">SOCIETY</p>
             <div className="neon-rule mt-5 w-full max-w-3xl" />
-            <p className="mt-5 max-w-3xl font-[family-name:var(--font-display)] text-lg uppercase tracking-[0.16em] text-zinc-300">
+            <p className="mt-5 max-w-[19rem] font-[family-name:var(--font-display)] text-base uppercase leading-relaxed tracking-[0.06em] text-zinc-300 sm:max-w-3xl sm:text-lg sm:tracking-[0.16em]">
               Olympiad precision. Esports pressure. A private ranking ledger for coders who earn their names.
             </p>
             <div className="mt-8 flex flex-col gap-3 sm:flex-row">

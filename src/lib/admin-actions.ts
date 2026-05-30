@@ -8,6 +8,7 @@ import { deleteFromCloudinary } from "@/server/uploads/cloudinary";
 
 const visibilitySchema = z.enum(["PUBLIC", "PRIVATE", "ARCHIVED"]);
 type DbClient = Prisma.TransactionClient | typeof prisma;
+const httpUrlSchema = z.string().url().refine((value) => /^https?:\/\//i.test(value), "Only HTTP(S) URLs are allowed.");
 
 const coordinatorSchema = z.object({
   name: z.string().min(1).max(120),
@@ -28,11 +29,11 @@ export const contestInputSchema = z.object({
   title: z.string().min(2).max(140),
   slug: z.string().optional(),
   description: z.string().max(5000).default(""),
-  invitePoster: z.string().url().optional().or(z.literal("")).nullable(),
-  bannerPoster: z.string().url().optional().or(z.literal("")).nullable(),
-  contestBanner: z.string().url().optional().or(z.literal("")).nullable(),
+  invitePoster: httpUrlSchema.optional().or(z.literal("")).nullable(),
+  bannerPoster: httpUrlSchema.optional().or(z.literal("")).nullable(),
+  contestBanner: httpUrlSchema.optional().or(z.literal("")).nullable(),
   platform: z.string().min(2).max(80).default("Codeforces"),
-  contestLink: z.string().url().optional().or(z.literal("")).nullable(),
+  contestLink: httpUrlSchema.optional().or(z.literal("")).nullable(),
   startTime: z.coerce.date(),
   duration: z.coerce.number().int().positive().max(1440).default(120),
   visibility: visibilitySchema.default("PUBLIC"),
@@ -97,9 +98,15 @@ function rankEntries(entries: EntryInput[], problems: { code: string; points: nu
   let previous: (typeof normalized)[number] | undefined;
   let previousRank = 0;
   return normalized
-    .sort((a, b) => b.solved - a.solved || a.penalty - b.penalty || a.username.localeCompare(b.username))
+    .sort((a, b) => (
+      b.solved - a.solved
+      || a.penalty - b.penalty
+      || a.username.localeCompare(b.username)
+    ))
     .map((entry, index) => {
-      const rank = previous && previous.solved === entry.solved && previous.penalty === entry.penalty
+      const rank = previous
+        && previous.solved === entry.solved
+        && previous.penalty === entry.penalty
         ? previousRank
         : index + 1;
       const bonusPoints = bonusForRank(rank);
@@ -136,21 +143,26 @@ export async function createOrUpdateContest(input: unknown, id?: string, adminId
   const data = contestInputSchema.parse(input);
   const { coordinators, problems: rawProblems, ...contestFields } = data;
   const problems = rawProblems ? parseProblems(rawProblems) : id ? undefined : defaultProblems;
-  const slug = data.slug ? slugify(data.slug) : slugify(data.title);
-  const payload = {
+  let slug = data.slug ? slugify(data.slug) : id ? undefined : slugify(data.title);
+  if (!id && !slug) throw new Error("Contest title must produce a valid slug.");
+  if (data.slug && !slug) throw new Error("Contest slug must contain at least one letter or number.");
+  if (!id && slug && !data.slug) slug = await uniqueContestSlug(slug);
+  const payload: Prisma.ContestUncheckedUpdateInput = {
     ...contestFields,
-    slug,
+    ...(slug ? { slug } : {}),
     invitePoster: optionalString(data.invitePoster),
     bannerPoster: optionalString(data.bannerPoster),
     contestBanner: optionalString(data.contestBanner),
     contestLink: optionalString(data.contestLink),
     prizePool: optionalString(data.prizePool),
-    createdById: adminId,
+    ...(!id ? { createdById: adminId } : {}),
     ...(problems ? { totalPoints: problems.reduce((sum, problem) => sum + problem.points, 0) } : {}),
   };
 
   const contest = await prisma.$transaction(async (tx) => {
-    const saved = id ? await tx.contest.update({ where: { id }, data: payload }) : await tx.contest.create({ data: payload });
+    const saved = id
+      ? await tx.contest.update({ where: { id }, data: payload })
+      : await tx.contest.create({ data: payload as Prisma.ContestUncheckedCreateInput });
     const uploadUrls = [saved.invitePoster, saved.bannerPoster].filter((url): url is string => Boolean(url));
     if (uploadUrls.length) {
       await tx.uploadAsset.updateMany({
@@ -189,6 +201,20 @@ export async function deleteContest(id: string, adminId?: string) {
   await logActivity(adminId, "contest.delete", "Contest", id, { title: contest.title });
   await Promise.all(assets.map((asset) => deleteFromCloudinary(asset.publicId).catch(() => undefined)));
   return contest;
+}
+
+async function uniqueContestSlug(baseSlug: string) {
+  const existing = await prisma.contest.findMany({
+    where: { slug: { startsWith: baseSlug } },
+    select: { slug: true },
+  });
+  const taken = new Set(existing.map((contest) => contest.slug));
+  if (!taken.has(baseSlug)) return baseSlug;
+  for (let suffix = 2; suffix < 10_000; suffix += 1) {
+    const candidate = `${baseSlug}-${suffix}`;
+    if (!taken.has(candidate)) return candidate;
+  }
+  throw new Error("Unable to generate a unique contest slug.");
 }
 
 export async function upsertContestEntries(contestId: string, rawEntries: unknown[], adminId?: string, { allowExisting = false } = {}) {
@@ -537,7 +563,7 @@ async function recomputeRatings(db: DbClient = prisma) {
 async function recalculateAllStats(db: DbClient = prisma) {
   const players = await db.player.findMany({ include: { standings: { include: { contest: true } } } });
   for (const player of players) {
-    const standings = player.standings.filter((standing) => standing.contest.standingsFinalizedAt);
+    const standings = player.standings.filter((standing) => standing.contest.standingsFinalizedAt && standing.contest.visibility !== "PRIVATE");
     const contestsPlayed = standings.length;
     const totalScore = standings.reduce((sum, item) => sum + item.finalScore, 0);
     const totalSolved = standings.reduce((sum, item) => sum + item.solved, 0);
@@ -579,19 +605,20 @@ async function rebuildYearlyLeaderboard(year: number, db: DbClient = prisma) {
 
 async function aggregatePeriod(where: Prisma.ContestWhereInput, db: DbClient = prisma) {
   const contests = await db.contest.findMany({ where, include: { standings: true } });
-  const grouped = new Map<string, { playerUsername: string; totalScore: number; contests: number; wins: number; solved: number; firstSolves: number; placements: number }>();
+  const grouped = new Map<string, { playerUsername: string; totalScore: number; contests: number; wins: number; solved: number; firstSolves: number; penalty: number; placements: number }>();
   for (const standing of contests.flatMap((contest) => contest.standings)) {
-    const current = grouped.get(standing.playerUsername) ?? { playerUsername: standing.playerUsername, totalScore: 0, contests: 0, wins: 0, solved: 0, firstSolves: 0, placements: 0 };
+    const current = grouped.get(standing.playerUsername) ?? { playerUsername: standing.playerUsername, totalScore: 0, contests: 0, wins: 0, solved: 0, firstSolves: 0, penalty: 0, placements: 0 };
     current.totalScore += standing.finalScore;
     current.contests += 1;
     current.wins += standing.rank === 1 ? 1 : 0;
     current.solved += standing.solved;
     current.firstSolves += standing.firstSolves;
+    current.penalty += standing.penalty;
     current.placements += standing.rank;
     grouped.set(standing.playerUsername, current);
   }
   return [...grouped.values()]
-    .sort((a, b) => b.totalScore - a.totalScore || b.wins - a.wins || b.solved - a.solved)
+    .sort((a, b) => b.totalScore - a.totalScore || b.wins - a.wins || a.penalty - b.penalty || b.solved - a.solved)
     .map((row, index) => ({ ...row, rank: index + 1, averageRank: Number((row.placements / row.contests).toFixed(1)) }));
 }
 
