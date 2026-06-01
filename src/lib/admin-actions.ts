@@ -3,10 +3,12 @@ import "server-only";
 import type { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
+import { contestStatusAt } from "@/lib/contest-status";
 import { bonusForRank, contestScore, finalChampionshipScore, rawScoreForSolveVector, societyRatingDelta } from "@/lib/scoring";
 import { deleteFromCloudinary } from "@/server/uploads/cloudinary";
 
 const visibilitySchema = z.enum(["PUBLIC", "PRIVATE", "ARCHIVED"]);
+const statusOverrideSchema = z.enum(["AUTO", "FORCE_UPCOMING", "FORCE_LIVE", "FORCE_COMPLETED"]);
 type DbClient = Prisma.TransactionClient | typeof prisma;
 const httpUrlSchema = z.string().url().refine((value) => /^https?:\/\//i.test(value), "Only HTTP(S) URLs are allowed.");
 
@@ -43,6 +45,12 @@ const playerInputSchema = z.object({
   branchCourse: z.string().trim().max(120).optional().or(z.literal("")).nullable(),
   avatar: httpUrlSchema.optional().or(z.literal("")).nullable(),
   bio: z.string().trim().max(1000).optional().or(z.literal("")).nullable(),
+  currentRating: z.coerce.number().int().min(0).max(100_000),
+  peakRating: z.coerce.number().int().min(0).max(100_000),
+  totalSolved: z.coerce.number().int().min(0).max(100_000),
+  wins: z.coerce.number().int().min(0).max(100_000),
+  firstSolves: z.coerce.number().int().min(0).max(100_000),
+  totalScore: z.coerce.number().int().min(0).max(100_000_000),
 });
 
 export const contestInputSchema = z.object({
@@ -56,6 +64,7 @@ export const contestInputSchema = z.object({
   contestLink: httpUrlSchema.optional().or(z.literal("")).nullable(),
   startTime: z.coerce.date(),
   duration: z.coerce.number().int().positive().max(1440).default(120),
+  statusOverride: statusOverrideSchema.default("AUTO"),
   visibility: visibilitySchema.default("PUBLIC"),
   scoringSystem: z.string().min(2).max(80).default("TDCS_TOP5_V1"),
   prizePool: z.string().max(120).optional().or(z.literal("")).nullable(),
@@ -223,7 +232,7 @@ export async function createOrUpdateContest(input: unknown, id?: string, adminId
     return saved;
   });
 
-  await logActivity(adminId, id ? "contest.update" : "contest.create", "Contest", contest.id, { title: contest.title });
+  await logActivity(adminId, id ? "contest.edited" : "contest.created", "Contest", contest.id, { title: contest.title });
   return contest;
 }
 
@@ -231,7 +240,7 @@ export async function deleteContest(id: string, adminId?: string) {
   const assets = await prisma.uploadAsset.findMany({ where: { contestId: id }, select: { publicId: true } });
   const contest = await prisma.contest.delete({ where: { id } });
   await refreshAllDerived();
-  await logActivity(adminId, "contest.delete", "Contest", id, { title: contest.title });
+  await logActivity(adminId, "contest.deleted", "Contest", id, { title: contest.title });
   await Promise.all(assets.map((asset) => deleteFromCloudinary(asset.publicId).catch(() => undefined)));
   return contest;
 }
@@ -269,7 +278,7 @@ export async function upsertContestEntries(contestId: string, rawEntries: unknow
     return rows;
   }, { maxWait: 10_000, timeout: 120_000 });
 
-  await logActivity(adminId, entries.length === 1 ? "participant.added" : "standings.draft.upsert", "ContestStanding", contestId, { rows: saved.length });
+  await logActivity(adminId, "standings.updated", "ContestStanding", contestId, { rows: saved.length, source: entries.length === 1 ? "single-row" : "draft" });
   return saved;
 }
 
@@ -283,7 +292,7 @@ export async function updateContestEntry(contestId: string, standingId: string, 
     await replaceContestStandings(contestId, next, tx);
     await refreshAllDerived(tx);
   }, { maxWait: 10_000, timeout: 120_000 });
-  await logActivity(adminId, "participant.edited", "ContestStanding", standingId, { contestId });
+  await logActivity(adminId, "standings.updated", "ContestStanding", standingId, { contestId, source: "row-edit" });
 }
 
 export async function deleteContestEntry(contestId: string, standingId: string, adminId?: string) {
@@ -297,7 +306,7 @@ export async function deleteContestEntry(contestId: string, standingId: string, 
     await replaceContestStandings(contestId, rows.map((row) => ({ username: row.player.username, fullName: row.player.fullName, solveVector: row.solveVector, penalty: row.penalty, notes: row.notes })), tx);
     await refreshAllDerived(tx);
   }, { maxWait: 10_000, timeout: 120_000 });
-  await logActivity(adminId, "participant.deleted", "ContestStanding", standingId, { contestId });
+  await logActivity(adminId, "standings.updated", "ContestStanding", standingId, { contestId, source: "row-delete" });
 }
 
 export async function saveContestProblemDraft(contestId: string, rawProblems: unknown[] = [], adminId?: string) {
@@ -354,7 +363,7 @@ export async function saveContestProblemDraft(contestId: string, rawProblems: un
     await tx.activityLog.create({
       data: {
         admin: adminId ? { connect: { id: adminId } } : undefined,
-        action: "first-solves.updated",
+        action: "first-solve.modified",
         entity: "ContestProblem",
         entityId: contestId,
         metadata: { problems: problems.length },
@@ -380,7 +389,7 @@ export async function finalizeContestStandings(contestId: string, rawProblems: u
     await tx.activityLog.create({
       data: {
         admin: adminId ? { connect: { id: adminId } } : undefined,
-        action: "standings.finalize",
+        action: "standings.updated",
         entity: "Contest",
         entityId: contestId,
         metadata: { rows: standings.length },
@@ -389,7 +398,7 @@ export async function finalizeContestStandings(contestId: string, rawProblems: u
     return { finalized: true, rows: standings.length };
   }, { maxWait: 10_000, timeout: 120_000 });
 
-  if (!result.finalized) await logActivity(adminId, "standings.finalize.idempotent", "Contest", contestId, { rows: result.rows });
+  if (!result.finalized) await logActivity(adminId, "standings.updated", "Contest", contestId, { rows: result.rows, source: "finalize-refresh" });
   return result;
 }
 
@@ -400,7 +409,7 @@ export async function recalculateContest(contestId: string, adminId?: string) {
     await replaceContestStandings(contestId, rows.map((row) => ({ username: row.player.username, fullName: row.player.fullName, solveVector: row.solveVector, penalty: row.penalty, notes: row.notes })), tx);
     await refreshAllDerived(tx);
   }, { maxWait: 10_000, timeout: 120_000 });
-  await logActivity(adminId, "standings.recalculate", "Contest", contestId);
+  await logActivity(adminId, "standings.updated", "Contest", contestId, { source: "recalculate" });
 }
 
 async function replaceContestStandings(contestId: string, entries: EntryInput[], db: DbClient) {
@@ -517,15 +526,29 @@ export async function updatePlayerProfile(username: string, input: unknown, admi
         branchCourse: optionalString(data.branchCourse),
         avatar: optionalString(data.avatar),
         bio: optionalString(data.bio),
+        currentRating: data.currentRating,
+        peakRating: Math.max(data.peakRating, data.currentRating),
+        totalSolved: data.totalSolved,
+        wins: data.wins,
+        firstSolves: data.firstSolves,
+        totalScore: data.totalScore,
       },
-      select: { id: true, fullName: true, username: true, year: true, email: true, branchCourse: true, avatar: true, bio: true },
+      select: { id: true, fullName: true, username: true, year: true, email: true, branchCourse: true, avatar: true, bio: true, currentRating: true, peakRating: true, totalSolved: true, wins: true, firstSolves: true, totalScore: true },
     });
-    await refreshAllDerived(tx);
     return saved;
   }, { maxWait: 10_000, timeout: 60_000 });
 
-  await logActivity(adminId, "player.update", "Player", player.username, { previousUsername: current.username });
+  await logActivity(adminId, "player.edited", "Player", player.username, { previousUsername: current.username });
   return player;
+}
+
+export async function deletePlayer(username: string, adminId?: string) {
+  const player = await prisma.player.findUniqueOrThrow({ where: { username } });
+  await prisma.$transaction(async (tx) => {
+    await tx.player.delete({ where: { id: player.id } });
+    await refreshAllDerived(tx);
+  }, { maxWait: 10_000, timeout: 120_000 });
+  await logActivity(adminId, "player.deleted", "Player", username, { fullName: player.fullName });
 }
 
 async function saveContestProblems(contestId: string, problems: ParsedProblem[], db: DbClient) {
@@ -592,7 +615,7 @@ async function syncFirstSolveCounts(contestId: string, db: DbClient) {
   }
 }
 
-async function refreshAllDerived(db: DbClient = prisma) {
+export async function refreshAllDerived(db: DbClient = prisma) {
   await recomputeRatings(db);
   await recalculateAllStats(db);
   const contests = await db.contest.findMany({ where: { standingsFinalizedAt: { not: null } }, select: { id: true, startTime: true } });
@@ -606,6 +629,53 @@ async function refreshAllDerived(db: DbClient = prisma) {
   await db.hallOfFame.deleteMany({ where: { contestId: { not: null } } });
   for (const contest of contests) await rebuildHallOfFame(contest.id, db);
   await rebuildAchievements(db);
+}
+
+export async function syncCompletedContests(adminId?: string) {
+  const candidates = await prisma.contest.findMany({
+    where: { visibility: { not: "PRIVATE" } },
+    include: { standings: { select: { id: true } } },
+    orderBy: { startTime: "asc" },
+  });
+  const completed = candidates.filter((contest) => contestStatusAt(contest.startTime, contest.duration, contest.statusOverride) === "COMPLETED");
+  const startedAt = new Date();
+
+  if (!completed.length) {
+    return { checked: candidates.length, synced: 0, finalized: 0, lastSyncedAt: startedAt.toISOString(), message: "No completed contests detected." };
+  }
+
+  await prisma.contest.updateMany({ where: { id: { in: completed.map((contest) => contest.id) } }, data: { syncStatus: "RUNNING", syncMessage: "Refresh in progress." } });
+
+  try {
+    let finalized = 0;
+    await prisma.$transaction(async (tx) => {
+      for (const contest of completed) {
+        if (!contest.standingsFinalizedAt && contest.standings.length) {
+          await tx.contest.update({ where: { id: contest.id }, data: { standingsFinalizedAt: startedAt } });
+          finalized += 1;
+        }
+      }
+      await refreshAllDerived(tx);
+      await tx.contest.updateMany({
+        where: { id: { in: completed.map((contest) => contest.id) } },
+        data: { lastSyncedAt: startedAt, syncStatus: "SUCCESS", syncMessage: `Synced ${completed.length} completed contest${completed.length === 1 ? "" : "s"}.` },
+      });
+      await tx.activityLog.create({
+        data: {
+          admin: adminId ? { connect: { id: adminId } } : undefined,
+          action: "standings.updated",
+          entity: "Contest",
+          metadata: { checked: candidates.length, synced: completed.length, finalized },
+        },
+      });
+    }, { maxWait: 10_000, timeout: 120_000 });
+    return { checked: candidates.length, synced: completed.length, finalized, lastSyncedAt: startedAt.toISOString(), message: "Completed contest data refreshed." };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Sync failed.";
+    await prisma.contest.updateMany({ where: { id: { in: completed.map((contest) => contest.id) } }, data: { syncStatus: "FAILED", syncMessage: message } });
+    await logActivity(adminId, "sync.failed", "Contest", undefined, { checked: candidates.length, attempted: completed.length, message });
+    throw error;
+  }
 }
 
 async function recomputeRatings(db: DbClient = prisma) {

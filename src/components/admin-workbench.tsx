@@ -10,7 +10,7 @@ import { cn } from "@/lib/utils";
 import { formatDateUTC } from "@/lib/utils";
 
 type ActivityLogView = { id: string; action: string; entity: string; entityId: string | null; createdAt: string };
-type PlayerAdminView = { id: string; fullName: string; username: string; year: number; email: string | null; branchCourse: string | null; avatar: string | null; bio: string | null };
+type PlayerAdminView = { id: string; fullName: string; username: string; year: number; email: string | null; branchCourse: string | null; avatar: string | null; bio: string | null; currentRating: number; peakRating: number; totalSolved: number; wins: number; firstSolves: number; totalScore: number };
 type CoordinatorDraft = { name: string; role: string; email: string; phone: string; discord: string };
 type FirstSolveDraftStatus = "ASSIGNED" | "UNSOLVED" | "NONE";
 type ProblemDraft = { code: string; title: string; points: number; firstSolveUsername: string; firstSolveStatus: FirstSolveDraftStatus };
@@ -20,6 +20,7 @@ type PlayerMutationResponse = { player: PlayerAdminView };
 type StandingsDraftResponse = { saved: number };
 type CodeforcesSyncResponse = { imported: number };
 type FinalizeStandingsResponse = { finalized?: boolean; rows?: number };
+type ManualSyncResponse = { checked: number; synced: number; finalized: number; lastSyncedAt: string; message: string };
 type SubmitJson = <TResponse = unknown>(endpoint: string, body: Record<string, unknown>, method?: string) => Promise<TResponse>;
 
 const emptyCoordinator: CoordinatorDraft = { name: "", role: "", email: "", phone: "", discord: "" };
@@ -104,6 +105,28 @@ export function AdminWorkbench({ contests, activityLogs, players }: { contests: 
     if (nextSelectedUsername !== undefined) setSelectedPlayer(nextSelectedUsername);
   }
 
+  useEffect(() => {
+    let cancelled = false;
+    async function syncOnLoad() {
+      try {
+        const response = await fetch("/api/admin/sync", { method: "POST", cache: "no-store" });
+        const payload = await response.json();
+        if (cancelled || !response.ok || !payload.synced) return;
+        await refreshContests(selectedContest);
+        await refreshPlayers(selectedPlayer);
+        if (!cancelled) setMessage(`Background sync refreshed ${payload.synced} completed contest${payload.synced === 1 ? "" : "s"}.`);
+      } catch {
+        if (!cancelled) setMessage("Background sync could not complete. Manual Sync is available in Quick Actions.");
+      }
+    }
+    syncOnLoad();
+    return () => {
+      cancelled = true;
+    };
+    // Run once when the control room opens; manual sync handles subsequent refreshes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   function selectContest(id: string) {
     setSelectedContest(id);
     setIsEditingContest(!id);
@@ -163,6 +186,7 @@ export function AdminWorkbench({ contests, activityLogs, players }: { contests: 
           visibility: contest.visibility,
           scoringSystem: contest.scoringSystem,
           prizePool: contest.prizePool ?? "",
+          statusOverride: contest.statusOverride,
           coordinators: contest.coordinators.map(({ name, role, email, phone, discord }: ContestCoordinatorView) => ({ name, role, email, phone, discord })),
           problems: contest.problems.map((problem) => ({
             code: problem.code,
@@ -232,6 +256,12 @@ export function AdminWorkbench({ contests, activityLogs, players }: { contests: 
                   <option value="PUBLIC">Public</option>
                   <option value="PRIVATE">Private</option>
                   <option value="ARCHIVED">Archived</option>
+                </select>
+                <select name="statusOverride" className="terminal-field clip-arena min-w-0 truncate px-4 py-3 font-[family-name:var(--font-mono)] text-sm" defaultValue={activeContest?.statusOverride ?? "AUTO"} disabled={Boolean(activeContest && !isEditingContest)}>
+                  <option value="AUTO">Automatic Status</option>
+                  <option value="FORCE_UPCOMING">Force Upcoming</option>
+                  <option value="FORCE_LIVE">Force Live</option>
+                  <option value="FORCE_COMPLETED">Force Completed</option>
                 </select>
                 <Field name="contestLink" placeholder="Official contest link" defaultValue={activeContest?.contestLink ?? ""} disabled={Boolean(activeContest && !isEditingContest)} />
                 <Field name="prizePool" placeholder="Prize title" defaultValue={activeContest?.prizePool ?? ""} disabled={Boolean(activeContest && !isEditingContest)} />
@@ -338,11 +368,15 @@ export function AdminWorkbench({ contests, activityLogs, players }: { contests: 
               <div className="mt-4 grid gap-3 lg:grid-cols-2">
                 <Operation label="Entries" value={activeContest?.entries.length ?? 0} />
                 <Operation label="Status" value={activeContest?.status ?? "N/A"} />
+                <Operation label="Override" value={activeContest?.statusOverride.replace("FORCE_", "") ?? "N/A"} />
                 <Operation label="Starts" value={activeContest ? formatDateUTC(activeContest.startTime) : "N/A"} />
                 <Operation label="Total contest points" value={activeContest?.totalPoints ?? "N/A"} />
                 <Operation label="Finalized" value={activeContest?.standingsFinalizedAt ? "YES" : "NO"} />
+                <Operation label="Sync Status" value={activeContest?.syncStatus ?? "N/A"} />
+                <Operation label="Last Sync" value={activeContest?.lastSyncedAt ? formatDateUTC(activeContest.lastSyncedAt) : "Never"} />
                 <Operation label="Last updated" value={activeContest ? formatDateUTC(activeContest.updatedAt) : "N/A"} />
               </div>
+              {activeContest?.syncMessage && <div className="empty-plaque clip-arena mt-4 min-w-0 overflow-hidden break-words p-3 font-[family-name:var(--font-mono)] text-xs text-zinc-300">{activeContest.syncMessage}</div>}
               <div className="mt-5 border-t border-white/10 pt-5">
                 <div className="flex min-w-0 items-center gap-3 text-[#9AFF00]">
                   <UserRound className="size-5 shrink-0" />
@@ -381,6 +415,7 @@ export function AdminWorkbench({ contests, activityLogs, players }: { contests: 
                 <Button type="button" disabled={!activeContest || isPending} onClick={() => updateContestVisibility(activeContest, "PUBLIC", submitJson, setMessage, startTransition, refreshContests)}><Upload className="size-4" /> Publish Contest</Button>
                 <Button type="button" variant="ghost" disabled={!activeContest || isPending} onClick={() => updateContestVisibility(activeContest, "PRIVATE", submitJson, setMessage, startTransition, refreshContests)}><X className="size-4" /> Unpublish Contest</Button>
                 <Button type="button" variant="ghost" disabled={!activeContest || isPending} onClick={() => recalculateContest(activeContest?.id, submitJson, setMessage, startTransition, refreshContests)}><Database className="size-4" /> Recalculate Standings</Button>
+                <Button type="button" variant="ghost" disabled={isPending} onClick={() => manualSync(submitJson, setMessage, startTransition, refreshContests, refreshPlayers)}><RadioTower className="size-4" /> Manual Sync</Button>
                 <Button type="button" variant="danger" disabled={!activeContest || isPending} onClick={() => deleteContest(activeContest?.id, submitJson, setMessage, startTransition, refreshContests)}><Trash2 className="size-4" /> Delete Contest</Button>
               </div>
           </Panel>
@@ -896,11 +931,28 @@ function PlayerEditor({ players, selectedPlayer, setSelectedPlayer, submitJson, 
       <LabeledField label="Email"><Field name="email" type="email" defaultValue={player.email ?? ""} placeholder="Optional email" /></LabeledField>
       <LabeledField label="Branch / Course"><Field name="branchCourse" defaultValue={player.branchCourse ?? ""} placeholder="Optional branch or course" /></LabeledField>
       <LabeledField label="Avatar URL"><Field name="avatar" defaultValue={player.avatar ?? ""} placeholder="Optional profile image URL" /></LabeledField>
+      <LabeledField label="Current Rating"><Field name="currentRating" type="number" min={0} defaultValue={player.currentRating} required /></LabeledField>
+      <LabeledField label="Peak Rating"><Field name="peakRating" type="number" min={0} defaultValue={player.peakRating} required /></LabeledField>
+      <LabeledField label="Solved Count"><Field name="totalSolved" type="number" min={0} defaultValue={player.totalSolved} required /></LabeledField>
+      <LabeledField label="Wins"><Field name="wins" type="number" min={0} defaultValue={player.wins} required /></LabeledField>
+      <LabeledField label="First Solves"><Field name="firstSolves" type="number" min={0} defaultValue={player.firstSolves} required /></LabeledField>
+      <LabeledField label="Leaderboard Points"><Field name="totalScore" type="number" min={0} defaultValue={player.totalScore} required /></LabeledField>
       <label className="grid min-w-0 gap-2 md:col-span-2">
         <span className="text-[10px] uppercase tracking-[0.18em] text-zinc-500">Bio</span>
         <textarea name="bio" defaultValue={player.bio ?? ""} rows={3} className="terminal-field clip-arena min-w-0 resize-y overflow-hidden px-4 py-3 font-[family-name:var(--font-mono)] text-sm" />
       </label>
-      <Button type="submit" disabled={isPending} className="md:col-span-2"><Save className="size-4" /> Save Player</Button>
+      <div className="flex min-w-0 flex-wrap gap-2 md:col-span-2">
+        <Button type="submit" disabled={isPending} className="w-full sm:w-auto"><Save className="size-4" /> Save Player</Button>
+        <Button
+          type="button"
+          variant="danger"
+          disabled={isPending}
+          className="w-full sm:w-auto"
+          onClick={() => deletePlayerProfile(player.username, submitJson, setMessage, startTransition, refreshPlayers, refreshContests)}
+        >
+          <Trash2 className="size-4" /> Delete Player
+        </Button>
+      </div>
     </form>
   );
 }
@@ -1026,11 +1078,39 @@ function contestPayload(contest: ContestView, overrides: Partial<ContestView> = 
     contestLink: next.contestLink ?? "",
     startTime: next.startTime,
     duration: next.duration,
+    statusOverride: next.statusOverride,
     visibility: next.visibility,
     scoringSystem: next.scoringSystem,
     prizePool: next.prizePool ?? "",
     coordinators: next.coordinators.map(({ name, role, email, phone, discord }: ContestCoordinatorView) => ({ name, role, email, phone, discord })),
   };
+}
+
+function deletePlayerProfile(username: string, submitJson: SubmitJson, setMessage: (message: string) => void, startTransition: (callback: () => void) => void, refreshPlayers: (username?: string) => Promise<void>, refreshContests: (id?: string) => Promise<void>) {
+  if (!window.confirm("Delete this player? This will remove their standings, first-solve rows, leaderboard history, profile records, and related uploads/certificates where required. Historical rankings will be recalculated.")) return;
+  startTransition(async () => {
+    try {
+      await submitJson(`/api/admin/players/${encodeURIComponent(username)}`, {}, "DELETE");
+      await refreshPlayers("");
+      await refreshContests();
+      setMessage("Player deleted. Related records were cascaded or detached, and derived history was rebuilt.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Unable to delete player.");
+    }
+  });
+}
+
+function manualSync(submitJson: SubmitJson, setMessage: (message: string) => void, startTransition: (callback: () => void) => void, refreshContests: (id?: string) => Promise<void>, refreshPlayers: (username?: string) => Promise<void>) {
+  startTransition(async () => {
+    try {
+      const response = await submitJson<ManualSyncResponse>("/api/admin/sync", {});
+      await refreshContests();
+      await refreshPlayers();
+      setMessage(`${response.message} Checked ${response.checked}, synced ${response.synced}, finalized ${response.finalized}.`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Manual sync failed.");
+    }
+  });
 }
 
 function updateContestVisibility(contest: ContestView | undefined, visibility: ContestView["visibility"], submitJson: SubmitJson, setMessage: (message: string) => void, startTransition: (callback: () => void) => void, refreshContests: (id?: string) => Promise<void>) {

@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button";
 export const dynamic = "force-dynamic";
 
 type ActivityLogSelect = Prisma.ActivityLogGetPayload<{ select: { id: true; action: true; entity: true; entityId: true; createdAt: true } }>;
-type PlayerSelect = Prisma.PlayerGetPayload<{ select: { id: true; fullName: true; username: true; year: true; email: true; branchCourse: true; avatar: true; bio: true } }>;
+type PlayerSelect = Prisma.PlayerGetPayload<{ select: { id: true; fullName: true; username: true; year: true; email: true; branchCourse: true; avatar: true; bio: true; currentRating: true; peakRating: true; totalSolved: true; wins: true; firstSolves: true; totalScore: true } }>;
 
 export default async function ControlRoomAdminPage({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
   const params = await searchParams;
@@ -21,14 +21,14 @@ export default async function ControlRoomAdminPage({ searchParams }: { searchPar
   const activityLogs: ActivityLogSelect[] = isAuthed
     ? await prisma.activityLog.findMany({
         orderBy: { createdAt: "desc" },
-        take: 12,
+        take: 20,
         select: { id: true, action: true, entity: true, entityId: true, createdAt: true },
       })
     : [];
   const players: PlayerSelect[] = isAuthed
     ? await prisma.player.findMany({
         orderBy: [{ fullName: "asc" }, { username: "asc" }],
-        select: { id: true, fullName: true, username: true, year: true, email: true, branchCourse: true, avatar: true, bio: true },
+        select: { id: true, fullName: true, username: true, year: true, email: true, branchCourse: true, avatar: true, bio: true, currentRating: true, peakRating: true, totalSolved: true, wins: true, firstSolves: true, totalScore: true },
       })
     : [];
 

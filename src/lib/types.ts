@@ -1,4 +1,6 @@
 export type ContestStatus = "UPCOMING" | "LIVE" | "COMPLETED";
+export type ContestStatusOverride = "AUTO" | "FORCE_UPCOMING" | "FORCE_LIVE" | "FORCE_COMPLETED";
+export type SyncStatus = "IDLE" | "RUNNING" | "SUCCESS" | "FAILED";
 
 export type ContestEntry = {
   id?: string;
@@ -32,6 +34,7 @@ export type Contest = {
   contestLink?: string | null;
   platform: string;
   status: ContestStatus;
+  statusOverride: ContestStatusOverride;
   startTime: string;
   updatedAt: string;
   duration: number;
@@ -47,6 +50,9 @@ export type ContestView = Omit<Contest, "bannerPoster" | "entries"> & {
   scoringSystem: string;
   prizePool: string | null;
   standingsFinalizedAt: string | null;
+  lastSyncedAt: string | null;
+  syncStatus: SyncStatus;
+  syncMessage: string | null;
   coordinators: {
     id: string;
     name: string;

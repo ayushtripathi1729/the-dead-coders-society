@@ -35,6 +35,20 @@ enum FirstSolveStatus {
   UNSOLVED
 }
 
+enum ContestStatusOverride {
+  AUTO
+  FORCE_UPCOMING
+  FORCE_LIVE
+  FORCE_COMPLETED
+}
+
+enum SyncStatus {
+  IDLE
+  RUNNING
+  SUCCESS
+  FAILED
+}
+
 model Admin {
   id           String        @id @default(cuid())
   email        String        @unique
@@ -98,11 +112,15 @@ model Contest {
   contestLink    String?
   startTime      DateTime
   duration       Int                    @default(120)
+  statusOverride ContestStatusOverride  @default(AUTO)
   visibility     ContestVisibility      @default(PUBLIC)
   scoringSystem  String                 @default("TDCS_ELO_V1")
   prizePool      String?
   totalPoints    Int                    @default(0)
   standingsFinalizedAt DateTime?
+  lastSyncedAt   DateTime?
+  syncStatus     SyncStatus             @default(IDLE)
+  syncMessage    String?
   createdById    String?
   createdAt      DateTime               @default(now())
   updatedAt      DateTime               @updatedAt
