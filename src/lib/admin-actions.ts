@@ -4,11 +4,13 @@ import type { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { contestStatusAt } from "@/lib/contest-status";
+import { NON_ARCHIVED_CONTEST_WHERE, RANKED_CONTEST_WHERE } from "@/lib/contest-filters";
 import { bonusForRank, contestScore, finalChampionshipScore, rawScoreForSolveVector, societyRatingDelta } from "@/lib/scoring";
 import { deleteFromCloudinary } from "@/server/uploads/cloudinary";
 
 const visibilitySchema = z.enum(["PUBLIC", "PRIVATE", "ARCHIVED"]);
 const statusOverrideSchema = z.enum(["AUTO", "FORCE_UPCOMING", "FORCE_LIVE", "FORCE_COMPLETED"]);
+const playerRoleSchema = z.enum(["MEMBER", "ADMIN"]);
 type DbClient = Prisma.TransactionClient | typeof prisma;
 const httpUrlSchema = z.string().url().refine((value) => /^https?:\/\//i.test(value), "Only HTTP(S) URLs are allowed.");
 
@@ -45,6 +47,7 @@ const playerInputSchema = z.object({
   branchCourse: z.string().trim().max(120).optional().or(z.literal("")).nullable(),
   avatar: httpUrlSchema.optional().or(z.literal("")).nullable(),
   bio: z.string().trim().max(1000).optional().or(z.literal("")).nullable(),
+  role: playerRoleSchema.default("MEMBER"),
   currentRating: z.coerce.number().int().min(0).max(100_000),
   peakRating: z.coerce.number().int().min(0).max(100_000),
   totalSolved: z.coerce.number().int().min(0).max(100_000),
@@ -102,7 +105,7 @@ const defaultProblems = Array.from({ length: 5 }, (_, index) => ({
   firstSolveUsername: null,
 }));
 
-function rankEntries(entries: EntryInput[], problems: { code: string; points: number }[]) {
+function rankEntries(entries: EntryInput[], problems: { code: string; points: number }[], adminUsernames = new Set<string>()) {
   const seen = new Set<string>();
   const normalized = entries.map((entry) => {
     const parsed = entryInputSchema.parse(entry);
@@ -125,9 +128,11 @@ function rankEntries(entries: EntryInput[], problems: { code: string; points: nu
     };
   });
 
+  const members = normalized.filter((entry) => !adminUsernames.has(entry.username));
+  const admins = normalized.filter((entry) => adminUsernames.has(entry.username));
   let previous: (typeof normalized)[number] | undefined;
   let previousRank = 0;
-  return normalized
+  const rankedMembers = members
     .sort((a, b) => (
       b.solved - a.solved
       || a.penalty - b.penalty
@@ -145,6 +150,10 @@ function rankEntries(entries: EntryInput[], problems: { code: string; points: nu
       previousRank = rank;
       return rankedEntry;
     })
+  const rankedAdmins = admins
+    .sort((a, b) => b.solved - a.solved || a.penalty - b.penalty || a.username.localeCompare(b.username))
+    .map((entry, index) => ({ ...entry, rank: rankedMembers.length + index + 1, bonusPoints: 0, finalScore: entry.contestScore }));
+  return [...rankedMembers, ...rankedAdmins];
 }
 
 function parseSolveVector(value: unknown) {
@@ -225,13 +234,11 @@ export async function createOrUpdateContest(input: unknown, id?: string, adminId
         })),
       });
     }
-    if (problems) {
-      await saveContestProblems(saved.id, problems, tx);
-      if (id) await refreshAllDerived(tx);
-    }
+    if (problems) await saveContestProblems(saved.id, problems, tx);
     return saved;
   });
 
+  if (id || problems) await refreshAllDerived();
   await logActivity(adminId, id ? "contest.edited" : "contest.created", "Contest", contest.id, { title: contest.title });
   return contest;
 }
@@ -274,10 +281,10 @@ export async function upsertContestEntries(contestId: string, rawEntries: unknow
       merged.set(key, entry);
     }
     const rows = await replaceContestStandings(contestId, [...merged.values()], tx);
-    await refreshAllDerived(tx);
     return rows;
   }, { maxWait: 10_000, timeout: 120_000 });
 
+  await refreshAllDerived();
   await logActivity(adminId, "standings.updated", "ContestStanding", contestId, { rows: saved.length, source: entries.length === 1 ? "single-row" : "draft" });
   return saved;
 }
@@ -290,8 +297,8 @@ export async function updateContestEntry(contestId: string, standingId: string, 
     const rows = await tx.contestStanding.findMany({ where: { contestId }, include: { player: true } });
     const next = rows.map((row) => row.id === standingId ? entry : { username: row.player.username, fullName: row.player.fullName, solveVector: row.solveVector, penalty: row.penalty, notes: row.notes });
     await replaceContestStandings(contestId, next, tx);
-    await refreshAllDerived(tx);
   }, { maxWait: 10_000, timeout: 120_000 });
+  await refreshAllDerived();
   await logActivity(adminId, "standings.updated", "ContestStanding", standingId, { contestId, source: "row-edit" });
 }
 
@@ -304,8 +311,8 @@ export async function deleteContestEntry(contestId: string, standingId: string, 
     await tx.contestParticipation.deleteMany({ where: { contestId, playerUsername: standing.playerUsername } });
     const rows = await tx.contestStanding.findMany({ where: { contestId }, include: { player: true } });
     await replaceContestStandings(contestId, rows.map((row) => ({ username: row.player.username, fullName: row.player.fullName, solveVector: row.solveVector, penalty: row.penalty, notes: row.notes })), tx);
-    await refreshAllDerived(tx);
   }, { maxWait: 10_000, timeout: 120_000 });
+  await refreshAllDerived();
   await logActivity(adminId, "standings.updated", "ContestStanding", standingId, { contestId, source: "row-delete" });
 }
 
@@ -369,23 +376,19 @@ export async function saveContestProblemDraft(contestId: string, rawProblems: un
         metadata: { problems: problems.length },
       },
     });
-    await refreshAllDerived(tx);
   }, { maxWait: 10_000, timeout: 120_000 });
+  await refreshAllDerived();
 }
 
 export async function finalizeContestStandings(contestId: string, rawProblems: unknown[] = [], adminId?: string) {
   const problems = parseProblems(rawProblems);
   const result = await prisma.$transaction(async (tx) => {
     const contest = await tx.contest.findUniqueOrThrow({ where: { id: contestId }, select: { standingsFinalizedAt: true } });
-    if (contest.standingsFinalizedAt) {
-      await refreshAllDerived(tx);
-      return { finalized: false, rows: await tx.contestStanding.count({ where: { contestId } }) };
-    }
+    if (contest.standingsFinalizedAt) return { finalized: false, rows: await tx.contestStanding.count({ where: { contestId } }) };
     const standings = await tx.contestStanding.findMany({ where: { contestId } });
     if (!standings.length) throw new Error("Add at least one participant before finalizing standings.");
     await saveContestProblems(contestId, problems, tx);
     await tx.contest.update({ where: { id: contestId }, data: { standingsFinalizedAt: new Date() } });
-    await refreshAllDerived(tx);
     await tx.activityLog.create({
       data: {
         admin: adminId ? { connect: { id: adminId } } : undefined,
@@ -398,6 +401,7 @@ export async function finalizeContestStandings(contestId: string, rawProblems: u
     return { finalized: true, rows: standings.length };
   }, { maxWait: 10_000, timeout: 120_000 });
 
+  await refreshAllDerived();
   if (!result.finalized) await logActivity(adminId, "standings.updated", "Contest", contestId, { rows: result.rows, source: "finalize-refresh" });
   return result;
 }
@@ -407,83 +411,137 @@ export async function recalculateContest(contestId: string, adminId?: string) {
     await tx.contest.findUniqueOrThrow({ where: { id: contestId }, select: { id: true } });
     const rows = await tx.contestStanding.findMany({ where: { contestId }, include: { player: true } });
     await replaceContestStandings(contestId, rows.map((row) => ({ username: row.player.username, fullName: row.player.fullName, solveVector: row.solveVector, penalty: row.penalty, notes: row.notes })), tx);
-    await refreshAllDerived(tx);
   }, { maxWait: 10_000, timeout: 120_000 });
+  await refreshAllDerived();
   await logActivity(adminId, "standings.updated", "Contest", contestId, { source: "recalculate" });
+}
+
+export async function checkAndFinalizeContest(contestId: string, adminId?: string) {
+  const contest = await prisma.contest.findUnique({
+    where: { id: contestId },
+    select: { id: true, startTime: true, duration: true, statusOverride: true, standingsFinalizedAt: true, standings: { select: { id: true } } },
+  });
+
+  if (!contest) throw new Error("Contest not found.");
+  if (contest.standingsFinalizedAt) return { finalized: false, message: "Contest already finalized." };
+  if (!contest.standings.length) return { finalized: false, message: "No participants to finalize." };
+
+  const status = contestStatusAt(contest.startTime, contest.duration, contest.statusOverride);
+  if (status !== "COMPLETED") return { finalized: false, message: `Contest status is ${status}, not COMPLETED.` };
+
+  await finalizeContestStandings(contestId, [], adminId);
+  return { finalized: true, message: "Contest finalized successfully." };
+}
+
+export async function updateContestVisibility(contestId: string, visibility: "PUBLIC" | "PRIVATE" | "ARCHIVED", adminId?: string) {
+  const contest = await prisma.contest.update({
+    where: { id: contestId },
+    data: { visibility },
+  });
+  await logActivity(adminId, `contest.visibility.${visibility.toLowerCase()}`, "Contest", contestId, { previous: contest.visibility, new: visibility });
+  return contest;
 }
 
 async function replaceContestStandings(contestId: string, entries: EntryInput[], db: DbClient) {
   const problems = await db.contestProblem.findMany({ where: { contestId }, orderBy: [{ sortOrder: "asc" }, { code: "asc" }] });
   if (!problems.length) throw new Error("Add contest problems before entering standings.");
-  const ranked = rankEntries(entries, problems);
-  const savedUsernames: string[] = [];
+  const parsedEntries = entries.map((entry) => entryInputSchema.parse(entry));
+  const playerRoles = await db.player.findMany({
+    where: { username: { in: parsedEntries.map((entry) => entry.username.toLowerCase()) } },
+    select: { username: true, role: true } as const,
+  });
+  const adminUsernames = new Set(playerRoles.filter((player) => player.role === "ADMIN").map((player) => player.username.toLowerCase()));
+  const ranked = rankEntries(parsedEntries, problems, adminUsernames);
 
+  // Phase 1: Prepare player data outside transaction to avoid long-running locks
+  const playersByUsername = new Map<string, { id: string; username: string }>();
   for (const entry of ranked) {
-    const existingPlayer = await db.player.findFirst({
+    const existing = await db.player.findFirst({
       where: { username: { equals: entry.username, mode: "insensitive" } },
+      select: { id: true, username: true },
     });
-    const player = existingPlayer
-      ? await db.player.update({ where: { id: existingPlayer.id }, data: { fullName: entry.fullName, username: existingPlayer.username } })
-      : await db.player.create({ data: { username: entry.username, fullName: entry.fullName } });
-
-    savedUsernames.push(player.username);
-    await db.contestParticipation.upsert({
-      where: { contestId_playerUsername: { contestId, playerUsername: player.username } },
-      update: {
-        finalRank: entry.rank,
-        finalScore: entry.finalScore,
-        solved: entry.solved,
-        solveVector: entry.solveVector,
-        solvedProblems: entry.solvedProblems,
-        rawScore: entry.rawScore,
-        contestScore: entry.contestScore,
-        penalty: entry.penalty,
-      },
-      create: {
-        contest: { connect: { id: contestId } },
-        player: { connect: { username: player.username } },
-        finalRank: entry.rank,
-        finalScore: entry.finalScore,
-        solved: entry.solved,
-        solveVector: entry.solveVector,
-        solvedProblems: entry.solvedProblems,
-        rawScore: entry.rawScore,
-        contestScore: entry.contestScore,
-        penalty: entry.penalty,
-      },
-    });
-
-    await db.contestStanding.upsert({
-      where: { contestId_playerUsername: { contestId, playerUsername: player.username } },
-      update: {
-        rank: entry.rank,
-        solved: entry.solved,
-        solveVector: entry.solveVector,
-        solvedProblems: entry.solvedProblems,
-        penalty: entry.penalty,
-        rawScore: entry.rawScore,
-        contestScore: entry.contestScore,
-        bonusPoints: entry.bonusPoints,
-        finalScore: entry.finalScore,
-        notes: entry.notes || undefined,
-      },
-      create: {
-        contest: { connect: { id: contestId } },
-        player: { connect: { username: player.username } },
-        rank: entry.rank,
-        solved: entry.solved,
-        solveVector: entry.solveVector,
-        solvedProblems: entry.solvedProblems,
-        penalty: entry.penalty,
-        rawScore: entry.rawScore,
-        contestScore: entry.contestScore,
-        bonusPoints: entry.bonusPoints,
-        finalScore: entry.finalScore,
-        firstSolves: 0,
-        notes: entry.notes || undefined,
-      },
-    });
+    if (existing) {
+      playersByUsername.set(entry.username, existing);
+    } else {
+      const created = await db.player.create({
+        data: { username: entry.username, fullName: entry.fullName },
+        select: { id: true, username: true },
+      });
+      playersByUsername.set(entry.username, created);
+    }
   }
+
+  // Phase 2: Batch operations inside transaction
+  const savedUsernames = ranked.map((entry) => playersByUsername.get(entry.username)?.username || entry.username);
+
+  // Batch upsert participations
+  await Promise.all(
+    ranked.map((entry) =>
+      db.contestParticipation.upsert({
+        where: { contestId_playerUsername: { contestId, playerUsername: entry.username } },
+        update: {
+          finalRank: entry.rank,
+          finalScore: entry.finalScore,
+          solved: entry.solved,
+          solveVector: entry.solveVector,
+          solvedProblems: entry.solvedProblems,
+          rawScore: entry.rawScore,
+          contestScore: entry.contestScore,
+          penalty: entry.penalty,
+        },
+        create: {
+          contest: { connect: { id: contestId } },
+          player: { connect: { username: entry.username } },
+          finalRank: entry.rank,
+          finalScore: entry.finalScore,
+          solved: entry.solved,
+          solveVector: entry.solveVector,
+          solvedProblems: entry.solvedProblems,
+          rawScore: entry.rawScore,
+          contestScore: entry.contestScore,
+          penalty: entry.penalty,
+        },
+      })
+    )
+  );
+
+  // Batch upsert standings
+  await Promise.all(
+    ranked.map((entry) =>
+      db.contestStanding.upsert({
+        where: { contestId_playerUsername: { contestId, playerUsername: entry.username } },
+        update: {
+          rank: entry.rank,
+          solved: entry.solved,
+          solveVector: entry.solveVector,
+          solvedProblems: entry.solvedProblems,
+          penalty: entry.penalty,
+          rawScore: entry.rawScore,
+          contestScore: entry.contestScore,
+          bonusPoints: entry.bonusPoints,
+          finalScore: entry.finalScore,
+          notes: entry.notes || undefined,
+        },
+        create: {
+          contest: { connect: { id: contestId } },
+          player: { connect: { username: entry.username } },
+          rank: entry.rank,
+          solved: entry.solved,
+          solveVector: entry.solveVector,
+          solvedProblems: entry.solvedProblems,
+          penalty: entry.penalty,
+          rawScore: entry.rawScore,
+          contestScore: entry.contestScore,
+          bonusPoints: entry.bonusPoints,
+          finalScore: entry.finalScore,
+          firstSolves: 0,
+          notes: entry.notes || undefined,
+        },
+      })
+    )
+  );
+
+  // Clean up removed standings
   const removedStandings = await db.contestStanding.findMany({
     where: { contestId, playerUsername: savedUsernames.length ? { notIn: savedUsernames } : undefined },
     select: { playerUsername: true },
@@ -526,6 +584,7 @@ export async function updatePlayerProfile(username: string, input: unknown, admi
         branchCourse: optionalString(data.branchCourse),
         avatar: optionalString(data.avatar),
         bio: optionalString(data.bio),
+        role: data.role,
         currentRating: data.currentRating,
         peakRating: Math.max(data.peakRating, data.currentRating),
         totalSolved: data.totalSolved,
@@ -533,7 +592,7 @@ export async function updatePlayerProfile(username: string, input: unknown, admi
         firstSolves: data.firstSolves,
         totalScore: data.totalScore,
       },
-      select: { id: true, fullName: true, username: true, year: true, email: true, branchCourse: true, avatar: true, bio: true, currentRating: true, peakRating: true, totalSolved: true, wins: true, firstSolves: true, totalScore: true },
+      select: { id: true, fullName: true, username: true, year: true, email: true, branchCourse: true, avatar: true, bio: true, role: true, currentRating: true, peakRating: true, totalSolved: true, wins: true, firstSolves: true, totalScore: true },
     });
     return saved;
   }, { maxWait: 10_000, timeout: 60_000 });
@@ -546,8 +605,8 @@ export async function deletePlayer(username: string, adminId?: string) {
   const player = await prisma.player.findUniqueOrThrow({ where: { username } });
   await prisma.$transaction(async (tx) => {
     await tx.player.delete({ where: { id: player.id } });
-    await refreshAllDerived(tx);
   }, { maxWait: 10_000, timeout: 120_000 });
+  await refreshAllDerived();
   await logActivity(adminId, "player.deleted", "Player", username, { fullName: player.fullName });
 }
 
@@ -631,9 +690,17 @@ export async function refreshAllDerived(db: DbClient = prisma) {
   await rebuildAchievements(db);
 }
 
-export async function syncCompletedContests(adminId?: string) {
+let lastLifecycleCheckAt = 0;
+const LIFECYCLE_REFRESH_INTERVAL_MS = 180_000;
+
+export async function syncCompletedContests(adminId?: string, { force = true }: { force?: boolean } = {}) {
+  const nowMs = Date.now();
+  if (!force && nowMs - lastLifecycleCheckAt < LIFECYCLE_REFRESH_INTERVAL_MS) {
+    return { checked: 0, synced: 0, finalized: 0, lastSyncedAt: new Date(lastLifecycleCheckAt || nowMs).toISOString(), message: "Lifecycle check skipped; recent refresh is still fresh." };
+  }
+  lastLifecycleCheckAt = nowMs;
   const candidates = await prisma.contest.findMany({
-    where: { visibility: { not: "PRIVATE" } },
+    where: NON_ARCHIVED_CONTEST_WHERE,
     include: { standings: { select: { id: true } } },
     orderBy: { startTime: "asc" },
   });
@@ -655,10 +722,9 @@ export async function syncCompletedContests(adminId?: string) {
           finalized += 1;
         }
       }
-      await refreshAllDerived(tx);
       await tx.contest.updateMany({
         where: { id: { in: completed.map((contest) => contest.id) } },
-        data: { lastSyncedAt: startedAt, syncStatus: "SUCCESS", syncMessage: `Synced ${completed.length} completed contest${completed.length === 1 ? "" : "s"}.` },
+        data: { lastSyncedAt: startedAt, syncStatus: "RUNNING", syncMessage: `Finalized ${finalized} contest${finalized === 1 ? "" : "s"}; rebuilding derived data.` },
       });
       await tx.activityLog.create({
         data: {
@@ -669,6 +735,11 @@ export async function syncCompletedContests(adminId?: string) {
         },
       });
     }, { maxWait: 10_000, timeout: 120_000 });
+    await refreshAllDerived();
+    await prisma.contest.updateMany({
+      where: { id: { in: completed.map((contest) => contest.id) } },
+      data: { lastSyncedAt: startedAt, syncStatus: "SUCCESS", syncMessage: `Synced ${completed.length} completed contest${completed.length === 1 ? "" : "s"}.` },
+    });
     return { checked: candidates.length, synced: completed.length, finalized, lastSyncedAt: startedAt.toISOString(), message: "Completed contest data refreshed." };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Sync failed.";
@@ -678,71 +749,144 @@ export async function syncCompletedContests(adminId?: string) {
   }
 }
 
+export async function rebuildRatings(adminId?: string) {
+  await recomputeRatings();
+  await recalculateAllStats();
+  await rebuildAchievements();
+  await logActivity(adminId, "ratings.rebuilt", "System");
+}
+
+export async function rebuildLeaderboards(adminId?: string) {
+  const contests = await prisma.contest.findMany({ where: { standingsFinalizedAt: { not: null } }, select: { startTime: true } });
+  const months = new Set(contests.map((contest) => `${contest.startTime.getUTCFullYear()}-${contest.startTime.getUTCMonth() + 1}`));
+  const years = new Set(contests.map((contest) => contest.startTime.getUTCFullYear()));
+  for (const key of months) {
+    const [year, month] = key.split("-").map(Number);
+    await rebuildMonthlyLeaderboard(year, month);
+  }
+  for (const year of years) await rebuildYearlyLeaderboard(year);
+  await logActivity(adminId, "leaderboards.rebuilt", "System");
+}
+
+export async function rebuildHallOfFameOnly(adminId?: string) {
+  const contests = await prisma.contest.findMany({ where: { standingsFinalizedAt: { not: null } }, select: { id: true } });
+  await prisma.hallOfFame.deleteMany({ where: { contestId: { not: null } } });
+  for (const contest of contests) await rebuildHallOfFame(contest.id);
+  await logActivity(adminId, "hall-of-fame.rebuilt", "System");
+}
+
+export async function rebuildEverything(adminId?: string) {
+  await syncCompletedContests(adminId, { force: true });
+  await refreshAllDerived();
+  await logActivity(adminId, "everything.rebuilt", "System");
+}
+
 async function recomputeRatings(db: DbClient = prisma) {
-  const players = await db.player.findMany({ select: { username: true } });
+  const players = await db.player.findMany({ select: { username: true, role: true } as const });
+  const memberPlayers = players.filter((player) => player.role === "MEMBER");
   const ratings = new Map(players.map((player) => [player.username, 1200]));
   const peaks = new Map(players.map((player) => [player.username, 1200]));
   const contests = await db.contest.findMany({
-    where: { visibility: { not: "PRIVATE" }, standingsFinalizedAt: { not: null } },
-    include: { standings: { orderBy: { rank: "asc" } } },
+    where: RANKED_CONTEST_WHERE,
+    include: { standings: { include: { player: true }, orderBy: { rank: "asc" } } },
     orderBy: { startTime: "asc" },
   });
 
   await db.ratingHistory.deleteMany();
+  await db.contestParticipation.updateMany({ data: { ratingDelta: 0 } });
+
+  // Batch create rating history and collect updates
+  const ratingHistoryRecords: Prisma.RatingHistoryCreateManyInput[] = [];
+  const participationDeltaUpdates: Array<{ contestId: string; playerUsername: string; delta: number }> = [];
+
   for (const contest of contests) {
-    const participantCount = Math.max(contest.standings.length, 1);
-    for (const standing of contest.standings) {
+    const memberStandings = contest.standings.filter((standing) => standing.player.role === "MEMBER");
+    const participantCount = Math.max(memberStandings.length, 1);
+    for (const standing of memberStandings) {
       const current = ratings.get(standing.playerUsername) ?? 1200;
       const delta = societyRatingDelta({ rank: standing.rank, solved: standing.solved, participantCount, finalScore: standing.finalScore, firstSolves: standing.firstSolves });
       const next = Math.max(100, current + delta);
       ratings.set(standing.playerUsername, next);
       peaks.set(standing.playerUsername, Math.max(peaks.get(standing.playerUsername) ?? 1200, next));
-      await db.ratingHistory.create({
-        data: {
-          player: { connect: { username: standing.playerUsername } },
-          contest: { connect: { id: contest.id } },
-          rating: next,
-          delta,
-          reason: "TDCS standings finalization",
-        },
+      ratingHistoryRecords.push({
+        playerUsername: standing.playerUsername,
+        contestId: contest.id,
+        rating: next,
+        delta,
+        reason: "TDCS standings finalization",
       });
-      await db.contestParticipation.updateMany({ where: { contestId: contest.id, playerUsername: standing.playerUsername }, data: { ratingDelta: delta } });
+      participationDeltaUpdates.push({ contestId: contest.id, playerUsername: standing.playerUsername, delta });
     }
   }
 
-  for (const player of players) {
-    await db.player.update({ where: { username: player.username }, data: { currentRating: ratings.get(player.username) ?? 1200, peakRating: peaks.get(player.username) ?? 1200 } });
+  // Batch create rating history
+  if (ratingHistoryRecords.length) {
+    await db.ratingHistory.createMany({ data: ratingHistoryRecords });
   }
+
+  // Batch update participation deltas
+  await Promise.all(
+    participationDeltaUpdates.map((update) =>
+      db.contestParticipation.updateMany({ where: { contestId: update.contestId, playerUsername: update.playerUsername }, data: { ratingDelta: update.delta } })
+    )
+  );
+
+  // Batch update player ratings
+  await Promise.all(
+    memberPlayers.map((player) =>
+      db.player.update({
+        where: { username: player.username },
+        data: { currentRating: ratings.get(player.username) ?? 1200, peakRating: peaks.get(player.username) ?? 1200 },
+      })
+    )
+  );
 }
 
 async function recalculateAllStats(db: DbClient = prisma) {
   const players = await db.player.findMany({ include: { standings: { include: { contest: true } } } });
+
+  // Prepare batch update data
+  const playerUpdates: Array<{id: string; data: Prisma.PlayerUpdateInput}> = [];
+
   for (const player of players) {
     const standings = player.standings.filter((standing) => standing.contest.standingsFinalizedAt && standing.contest.visibility !== "PRIVATE");
+    const rankedStandings = player.role === "ADMIN" ? [] : standings;
     const contestsPlayed = standings.length;
     const totalScore = standings.reduce((sum, item) => sum + item.finalScore, 0);
     const totalSolved = standings.reduce((sum, item) => sum + item.solved, 0);
-    const wins = standings.filter((item) => item.rank === 1).length;
-    const podiums = standings.filter((item) => item.rank <= 3).length;
+    const wins = rankedStandings.filter((item) => item.rank === 1).length;
+    const podiums = rankedStandings.filter((item) => item.rank <= 3).length;
     const firstSolves = standings.reduce((sum, item) => sum + item.firstSolves, 0);
-    const averageRank = contestsPlayed ? standings.reduce((sum, item) => sum + item.rank, 0) / contestsPlayed : null;
-    const bestRank = contestsPlayed ? Math.min(...standings.map((item) => item.rank)) : null;
-    await db.player.update({ where: { id: player.id }, data: { contestsPlayed, totalScore, totalSolved, wins, podiums, firstSolves, averageRank, bestRank } });
+    const averageRank = rankedStandings.length ? rankedStandings.reduce((sum, item) => sum + item.rank, 0) / rankedStandings.length : null;
+    const bestRank = rankedStandings.length ? Math.min(...rankedStandings.map((item) => item.rank)) : null;
+    playerUpdates.push({
+      id: player.id,
+      data: { contestsPlayed, totalScore, totalSolved, wins, podiums, firstSolves, averageRank, bestRank },
+    });
   }
+
+  // Batch update players
+  await Promise.all(
+    playerUpdates.map((update) =>
+      db.player.update({ where: { id: update.id }, data: update.data })
+    )
+  );
 }
 
 async function rebuildMonthlyLeaderboard(year: number, month: number, db: DbClient = prisma) {
   const start = new Date(Date.UTC(year, month - 1, 1));
   const end = new Date(Date.UTC(year, month, 1));
-  const rows = await aggregatePeriod({ startTime: { gte: start, lt: end }, visibility: { not: "PRIVATE" }, standingsFinalizedAt: { not: null } }, db);
+  const rows = await aggregatePeriod({ startTime: { gte: start, lt: end }, ...RANKED_CONTEST_WHERE }, db);
   const now = new Date();
   const isCurrentMonth = year === now.getUTCFullYear() && month === now.getUTCMonth() + 1;
   await db.monthlyLeaderboard.deleteMany({ where: { year, month } });
   if (isCurrentMonth) await db.player.updateMany({ data: { monthlyRank: null } });
-  for (const row of rows) {
-    await db.monthlyLeaderboard.create({
-      data: {
-        player: { connect: { username: row.playerUsername } },
+
+  // Batch create monthly leaderboard entries
+  if (rows.length) {
+    await db.monthlyLeaderboard.createMany({
+      data: rows.map((row) => ({
+        playerUsername: row.playerUsername,
         year,
         month,
         rank: row.rank,
@@ -752,23 +896,33 @@ async function rebuildMonthlyLeaderboard(year: number, month: number, db: DbClie
         solved: row.solved,
         firstSolves: row.firstSolves,
         averageRank: row.averageRank,
-      },
+      })),
     });
-    if (isCurrentMonth) await db.player.update({ where: { username: row.playerUsername }, data: { monthlyRank: row.rank } });
+  }
+
+  // Batch update player monthly ranks
+  if (isCurrentMonth && rows.length) {
+    await Promise.all(
+      rows.map((row) =>
+        db.player.update({ where: { username: row.playerUsername }, data: { monthlyRank: row.rank } })
+      )
+    );
   }
 }
 
 async function rebuildYearlyLeaderboard(year: number, db: DbClient = prisma) {
   const start = new Date(Date.UTC(year, 0, 1));
   const end = new Date(Date.UTC(year + 1, 0, 1));
-  const rows = await aggregatePeriod({ startTime: { gte: start, lt: end }, visibility: { not: "PRIVATE" }, standingsFinalizedAt: { not: null } }, db);
+  const rows = await aggregatePeriod({ startTime: { gte: start, lt: end }, ...RANKED_CONTEST_WHERE }, db);
   const isCurrentYear = year === new Date().getUTCFullYear();
   await db.yearlyLeaderboard.deleteMany({ where: { year } });
   if (isCurrentYear) await db.player.updateMany({ data: { yearlyRank: null } });
-  for (const row of rows) {
-    await db.yearlyLeaderboard.create({
-      data: {
-        player: { connect: { username: row.playerUsername } },
+
+  // Batch create yearly leaderboard entries
+  if (rows.length) {
+    await db.yearlyLeaderboard.createMany({
+      data: rows.map((row) => ({
+        playerUsername: row.playerUsername,
         year,
         rank: row.rank,
         totalScore: row.totalScore,
@@ -777,16 +931,25 @@ async function rebuildYearlyLeaderboard(year: number, db: DbClient = prisma) {
         solved: row.solved,
         firstSolves: row.firstSolves,
         averageRank: row.averageRank,
-      },
+      })),
     });
-    if (isCurrentYear) await db.player.update({ where: { username: row.playerUsername }, data: { yearlyRank: row.rank } });
+  }
+
+  // Batch update player yearly ranks
+  if (isCurrentYear && rows.length) {
+    await Promise.all(
+      rows.map((row) =>
+        db.player.update({ where: { username: row.playerUsername }, data: { yearlyRank: row.rank } })
+      )
+    );
   }
 }
 
 async function aggregatePeriod(where: Prisma.ContestWhereInput, db: DbClient = prisma) {
-  const contests = await db.contest.findMany({ where, include: { standings: true } });
+  const contests = await db.contest.findMany({ where, include: { standings: { include: { player: true } } } });
   const grouped = new Map<string, { playerUsername: string; totalScore: number; contests: number; wins: number; solved: number; firstSolves: number; penalty: number; placements: number }>();
   for (const standing of contests.flatMap((contest) => contest.standings)) {
+    if (standing.player.role === "ADMIN") continue;
     const current = grouped.get(standing.playerUsername) ?? { playerUsername: standing.playerUsername, totalScore: 0, contests: 0, wins: 0, solved: 0, firstSolves: 0, penalty: 0, placements: 0 };
     current.totalScore += standing.finalScore;
     current.contests += 1;
@@ -805,10 +968,10 @@ async function aggregatePeriod(where: Prisma.ContestWhereInput, db: DbClient = p
 async function rebuildHallOfFame(contestId: string, db: DbClient = prisma) {
   const finalists = await db.contestStanding.findMany({
     where: { contestId, rank: { lte: 5 } },
-    include: { contest: true },
+    include: { contest: true, player: true },
     orderBy: { rank: "asc" },
   });
-  for (const standing of finalists) {
+  for (const standing of finalists.filter((standing) => standing.player.role === "MEMBER")) {
     const isWinner = standing.rank === 1;
     await db.hallOfFame.upsert({
       where: { id: `${contestId}:${standing.playerUsername}` },

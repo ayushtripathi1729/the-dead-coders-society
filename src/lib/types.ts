@@ -1,12 +1,14 @@
 export type ContestStatus = "UPCOMING" | "LIVE" | "COMPLETED";
 export type ContestStatusOverride = "AUTO" | "FORCE_UPCOMING" | "FORCE_LIVE" | "FORCE_COMPLETED";
 export type SyncStatus = "IDLE" | "RUNNING" | "SUCCESS" | "FAILED";
+export type PlayerRole = "MEMBER" | "ADMIN";
 
 export type ContestEntry = {
   id?: string;
   username: string;
   fullName: string;
   year?: number;
+  role?: PlayerRole;
   rank: number;
   solved: number;
   solveVector: number[];

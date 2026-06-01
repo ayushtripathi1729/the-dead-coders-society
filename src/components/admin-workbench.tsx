@@ -10,7 +10,7 @@ import { cn } from "@/lib/utils";
 import { formatDateUTC } from "@/lib/utils";
 
 type ActivityLogView = { id: string; action: string; entity: string; entityId: string | null; createdAt: string };
-type PlayerAdminView = { id: string; fullName: string; username: string; year: number; email: string | null; branchCourse: string | null; avatar: string | null; bio: string | null; currentRating: number; peakRating: number; totalSolved: number; wins: number; firstSolves: number; totalScore: number };
+type PlayerAdminView = { id: string; fullName: string; username: string; year: number; email: string | null; branchCourse: string | null; avatar: string | null; bio: string | null; role: "MEMBER" | "ADMIN"; currentRating: number; peakRating: number; totalSolved: number; wins: number; firstSolves: number; totalScore: number };
 type CoordinatorDraft = { name: string; role: string; email: string; phone: string; discord: string };
 type FirstSolveDraftStatus = "ASSIGNED" | "UNSOLVED" | "NONE";
 type ProblemDraft = { code: string; title: string; points: number; firstSolveUsername: string; firstSolveStatus: FirstSolveDraftStatus };

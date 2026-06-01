@@ -49,6 +49,11 @@ enum SyncStatus {
   FAILED
 }
 
+enum PlayerRole {
+  MEMBER
+  ADMIN
+}
+
 model Admin {
   id           String        @id @default(cuid())
   email        String        @unique
@@ -69,6 +74,7 @@ model Player {
   branchCourse    String?
   avatar          String?
   bio             String?
+  role            PlayerRole             @default(MEMBER)
   currentRating   Int                    @default(1200)
   peakRating      Int                    @default(1200)
   monthlyRank     Int?

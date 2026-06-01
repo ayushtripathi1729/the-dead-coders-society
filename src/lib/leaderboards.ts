@@ -1,7 +1,9 @@
 import "server-only";
 
 import type { Achievement, Contest, ContestCoordinator, ContestParticipation, ContestProblem, ContestStanding, FirstSolve, Player, RatingHistory } from "@prisma/client";
+import { syncCompletedContests } from "@/lib/admin-actions";
 import { contestStatusAt } from "@/lib/contest-status";
+import { PUBLIC_CONTEST_WHERE, RANKED_CONTEST_WHERE } from "@/lib/contest-filters";
 import { prisma } from "@/lib/prisma";
 import type { ContestView, LeaderboardRow } from "@/lib/types";
 
@@ -114,6 +116,7 @@ function toContestView(contest: ContestWithEntries): ContestView {
         username: entry.player.username,
         fullName: entry.player.fullName,
         year: entry.player.year,
+        role: entry.player.role,
         rank: entry.rank,
         solved: entry.solved,
         solveVector: entry.solveVector,
@@ -135,8 +138,9 @@ const contestInclude = {
 };
 
 export async function listContests({ includeHidden = false }: { includeHidden?: boolean } = {}): Promise<ContestView[]> {
+  await syncCompletedContests(undefined, { force: false });
   const contests = await prisma.contest.findMany({
-    where: includeHidden ? undefined : { visibility: { not: "PRIVATE" } },
+    where: includeHidden ? undefined : PUBLIC_CONTEST_WHERE,
     include: contestInclude,
     orderBy: { startTime: "desc" },
   });
@@ -144,6 +148,7 @@ export async function listContests({ includeHidden = false }: { includeHidden?: 
 }
 
 export async function getContest(idOrSlug: string): Promise<ContestView | null> {
+  await syncCompletedContests(undefined, { force: false });
   const contest = await prisma.contest.findFirst({
     where: { OR: [{ id: idOrSlug }, { slug: idOrSlug }] },
     include: contestInclude,
@@ -154,6 +159,7 @@ export async function getContest(idOrSlug: string): Promise<ContestView | null> 
 function aggregate(entries: EntryWithPlayer[]): LeaderboardRow[] {
   const rows = new Map<string, Omit<LeaderboardRow, "rank" | "averagePlacement" | "bestPlacement"> & { placements: number; bestPlacement: number }>();
   for (const item of entries) {
+    if (item.player.role === "ADMIN") continue;
     const current = rows.get(item.player.username) ?? {
       username: item.player.username,
       fullName: item.player.fullName,
@@ -192,10 +198,11 @@ function aggregate(entries: EntryWithPlayer[]): LeaderboardRow[] {
 }
 
 export async function monthlyLeaderboard(year: number, month: number): Promise<{ contests: ContestView[]; rows: LeaderboardRow[] }> {
+  await syncCompletedContests(undefined, { force: false });
   const start = new Date(Date.UTC(year, month - 1, 1));
   const end = new Date(Date.UTC(year, month, 1));
   const contests = await prisma.contest.findMany({
-    where: { startTime: { gte: start, lt: end }, visibility: { not: "PRIVATE" }, standingsFinalizedAt: { not: null } },
+    where: { startTime: { gte: start, lt: end }, ...RANKED_CONTEST_WHERE },
     include: contestInclude,
     orderBy: { startTime: "asc" },
   });
@@ -203,10 +210,11 @@ export async function monthlyLeaderboard(year: number, month: number): Promise<{
 }
 
 export async function yearlyLeaderboard(year: number): Promise<{ contests: ContestView[]; rows: LeaderboardRow[] }> {
+  await syncCompletedContests(undefined, { force: false });
   const start = new Date(Date.UTC(year, 0, 1));
   const end = new Date(Date.UTC(year + 1, 0, 1));
   const contests = await prisma.contest.findMany({
-    where: { startTime: { gte: start, lt: end }, visibility: { not: "PRIVATE" }, standingsFinalizedAt: { not: null } },
+    where: { startTime: { gte: start, lt: end }, ...RANKED_CONTEST_WHERE },
     include: contestInclude,
     orderBy: { startTime: "asc" },
   });
@@ -218,19 +226,19 @@ export async function getPlayer(username: string): Promise<PlayerProfile | null>
     where: { username: username.toLowerCase() },
     include: {
       standings: {
-        where: { contest: { standingsFinalizedAt: { not: null }, visibility: { not: "PRIVATE" } } },
+        where: { contest: RANKED_CONTEST_WHERE },
         include: { contest: true },
         orderBy: { contest: { startTime: "desc" } },
       },
       ratingHistory: { orderBy: { createdAt: "asc" } },
       achievements: { orderBy: { earnedAt: "desc" } },
       firstSolveRows: {
-        where: { status: "ASSIGNED", problem: { contest: { visibility: { not: "PRIVATE" } } } },
+        where: { status: "ASSIGNED", problem: { contest: PUBLIC_CONTEST_WHERE } },
         include: { problem: { include: { contest: true } } },
         orderBy: { createdAt: "desc" },
       },
       participations: {
-        where: { contest: { standingsFinalizedAt: { not: null }, visibility: { not: "PRIVATE" } } },
+        where: { contest: RANKED_CONTEST_WHERE },
         include: { contest: true },
         orderBy: { contest: { startTime: "desc" } },
       },

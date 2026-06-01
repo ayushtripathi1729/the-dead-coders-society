@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createOrUpdateContest, deleteContest } from "@/lib/admin-actions";
+import { checkAndFinalizeContest, createOrUpdateContest, deleteContest } from "@/lib/admin-actions";
 import { requireAdmin } from "@/lib/auth";
 import { readBody } from "@/lib/request";
 
@@ -10,6 +10,8 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   const body = await readBody(request);
   try {
     const contest = await createOrUpdateContest(body, id, admin.id);
+    // Auto-finalize if contest is completed
+    await checkAndFinalizeContest(id, admin.id).catch(() => undefined);
     return NextResponse.json({ ok: true, contest });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to update contest." }, { status: 400 });

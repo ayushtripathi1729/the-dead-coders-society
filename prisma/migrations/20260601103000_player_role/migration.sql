@@ -1,0 +1,4 @@
+CREATE TYPE "PlayerRole" AS ENUM ('MEMBER', 'ADMIN');
+
+ALTER TABLE "Player"
+  ADD COLUMN "role" "PlayerRole" NOT NULL DEFAULT 'MEMBER';

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createOrUpdateContest } from "@/lib/admin-actions";
+import { checkAndFinalizeContest, createOrUpdateContest } from "@/lib/admin-actions";
 import { requireAdmin } from "@/lib/auth";
 import { listContests } from "@/lib/leaderboards";
 import { readBody } from "@/lib/request";
@@ -15,6 +15,8 @@ export async function POST(request: NextRequest) {
   const body = await readBody(request);
   try {
     const contest = await createOrUpdateContest(body, undefined, admin.id);
+    // Auto-finalize if contest is completed
+    await checkAndFinalizeContest(contest.id, admin.id).catch(() => undefined);
     return NextResponse.json({ ok: true, contest });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Unable to create contest." }, { status: 400 });
