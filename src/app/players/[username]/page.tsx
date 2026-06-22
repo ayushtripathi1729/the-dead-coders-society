@@ -6,9 +6,18 @@ import { Nav } from "@/components/nav";
 import { PlayerChart } from "@/components/player-chart";
 import { yearLabel } from "@/lib/labels";
 import { getPlayer, type PlayerProfile } from "@/lib/leaderboards";
+import { prisma } from "@/lib/prisma";
 import { formatDateUTC } from "@/lib/utils";
 
 export const revalidate = 60;
+
+export async function generateStaticParams() {
+  const players = await prisma.player.findMany({
+    where: { role: "MEMBER" },
+    select: { username: true },
+  });
+  return players.map((player) => ({ username: player.username }));
+}
 
 type ChartPoint = { contest: string; score: number };
 type PlayerHistoryItem = PlayerProfile["history"][number];
@@ -104,6 +113,19 @@ export default async function PlayerPage({ params }: { params: Promise<{ usernam
         </section>
 
         <section className="section-band mt-6 p-5">
+          <h2 className="section-rune font-[family-name:var(--font-display)] text-xl uppercase">Training Path</h2>
+          <div className="mt-5 grid gap-3 md:grid-cols-3">
+            {player.recommendations.length ? player.recommendations.map((recommendation) => (
+              <div key={recommendation.id} className="clip-arena border border-[#9AFF00]/20 bg-black/45 p-4">
+                <p className="font-[family-name:var(--font-display)] text-lg uppercase text-white">{recommendation.topic?.title ?? "General Practice"}</p>
+                <p className="mt-2 text-xs uppercase tracking-[0.18em] text-[#9AFF00]">{recommendation.nextDifficulty}</p>
+                <p className="mt-3 text-sm text-zinc-400">{recommendation.reason}</p>
+              </div>
+            )) : <p className="text-sm text-zinc-500">Recommendations will appear after the next derived-data rebuild.</p>}
+          </div>
+        </section>
+
+        <section className="section-band mt-6 p-5">
           <h2 className="section-rune font-[family-name:var(--font-display)] text-xl uppercase">Contest History</h2>
           {player.history.length ? (
             <div className="mt-5 overflow-x-auto">
@@ -142,6 +164,20 @@ export default async function PlayerPage({ params }: { params: Promise<{ usernam
                 <p className="mt-1 text-sm text-zinc-400">{achievement.description ?? "Permanent TDS achievement."}</p>
               </div>
             )) : <p className="text-sm text-zinc-500">No achievements earned yet.</p>}
+          </div>
+        </section>
+
+        <section className="section-band mt-6 p-5">
+          <h2 className="section-rune font-[family-name:var(--font-display)] text-xl uppercase">Certificates</h2>
+          <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {player.certificates.length ? player.certificates.map((certificate) => (
+              <div key={certificate.id} className="clip-arena border border-[#F3C55B]/25 bg-black/45 p-4">
+                <p className="text-[10px] uppercase tracking-[0.18em] text-[#F3C55B]">{certificate.type}</p>
+                <p className="mt-2 font-[family-name:var(--font-display)] text-lg uppercase text-white">{certificate.title}</p>
+                <p className="mt-2 text-sm text-zinc-500">{formatDateUTC(certificate.issuedAt)}</p>
+                {certificate.assetUrl && <a href={certificate.assetUrl} className="mt-3 inline-block text-sm text-[#9AFF00] underline underline-offset-4">Open certificate</a>}
+              </div>
+            )) : <p className="text-sm text-zinc-500">No certificates issued yet.</p>}
           </div>
         </section>
 

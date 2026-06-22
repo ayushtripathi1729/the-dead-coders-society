@@ -4,6 +4,7 @@ import { auth } from "@/auth";
 import { adminSignIn, adminSignOut } from "@/actions/auth-actions";
 import { AdminWorkbench } from "@/components/admin-workbench";
 import { ArenaBackground } from "@/components/arena-background";
+import { getEcosystemStats } from "@/lib/ecosystem";
 import { listContests } from "@/lib/leaderboards";
 import { prisma } from "@/lib/prisma";
 import { Button } from "@/components/ui/button";
@@ -33,7 +34,7 @@ export default async function ControlRoomAdminPage({ searchParams }: { searchPar
     : [];
   const analytics = isAuthed
     ? await controlRoomAnalytics(players)
-    : { totalPlayers: 0, totalContests: 0, totalSubmissions: 0, averageParticipation: 0, mostActivePlayer: "N/A", topRatedPlayer: "N/A" };
+    : { totalPlayers: 0, totalContests: 0, totalSubmissions: 0, averageParticipation: 0, mostActivePlayer: "N/A", topRatedPlayer: "N/A", academyTopics: 0, seasonCount: 0, teamCount: 0, pendingDiscussions: 0, issuedCertificates: 0 };
 
   return (
     <>
@@ -90,10 +91,11 @@ export default async function ControlRoomAdminPage({ searchParams }: { searchPar
 }
 
 async function controlRoomAnalytics(players: PlayerSelect[]) {
-  const [totalContests, totalSubmissions, grouped] = await Promise.all([
+  const [totalContests, totalSubmissions, grouped, ecosystem] = await Promise.all([
     prisma.contest.count(),
     prisma.contestStanding.count(),
     prisma.contestStanding.groupBy({ by: ["playerUsername"], _count: { playerUsername: true }, orderBy: { _count: { playerUsername: "desc" } }, take: 1 }),
+    getEcosystemStats(),
   ]);
   const topRated = [...players].sort((a, b) => b.currentRating - a.currentRating)[0];
   return {
@@ -103,5 +105,6 @@ async function controlRoomAnalytics(players: PlayerSelect[]) {
     averageParticipation: totalContests ? Number((totalSubmissions / totalContests).toFixed(1)) : 0,
     mostActivePlayer: grouped[0]?.playerUsername ?? "N/A",
     topRatedPlayer: topRated ? `${topRated.fullName} (${topRated.currentRating})` : "N/A",
+    ...ecosystem,
   };
 }

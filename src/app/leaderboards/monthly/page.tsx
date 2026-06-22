@@ -1,22 +1,19 @@
 import Link from "next/link";
 import { CalendarDays } from "lucide-react";
 import { ArenaBackground } from "@/components/arena-background";
-import { LeaderboardTable } from "@/components/leaderboard-table";
 import { Nav } from "@/components/nav";
 import { Podium } from "@/components/podium";
+import { SortableLeaderboard } from "@/components/sortable-leaderboard";
 import { StatusBadge } from "@/components/status-badge";
 import { monthlyLeaderboard } from "@/lib/leaderboards";
-import type { LeaderboardRow } from "@/lib/types";
 
 export const revalidate = 60;
 
-export default async function MonthlyPage({ searchParams }: { searchParams: Promise<{ year?: string; month?: string; sort?: string }> }) {
-  const params = await searchParams;
+export default async function MonthlyPage() {
   const now = new Date();
-  const year = Number(params.year ?? now.getUTCFullYear());
-  const month = Number(params.month ?? now.getUTCMonth() + 1);
+  const year = now.getUTCFullYear();
+  const month = now.getUTCMonth() + 1;
   const board = await monthlyLeaderboard(year, month);
-  const rows = sortRows(board.rows, params.sort);
 
   return (
     <>
@@ -48,10 +45,7 @@ export default async function MonthlyPage({ searchParams }: { searchParams: Prom
         )}
         <div className="mt-8">
           {board.rows.length ? (
-            <>
-              <SortBar base={`/leaderboards/monthly?year=${year}&month=${month}`} />
-              <LeaderboardTable type="aggregate" rows={rows} />
-            </>
+            <SortableLeaderboard rows={board.rows} />
           ) : null}
         </div>
         <section className="mt-10 grid gap-4 md:grid-cols-3">
@@ -66,26 +60,5 @@ export default async function MonthlyPage({ searchParams }: { searchParams: Prom
         </section>
       </main>
     </>
-  );
-}
-
-function sortRows(rows: LeaderboardRow[], sort = "points") {
-  return [...rows].sort((a, b) => {
-    if (sort === "rating") return b.rating - a.rating || a.rank - b.rank;
-    if (sort === "wins") return b.wins - a.wins || a.rank - b.rank;
-    if (sort === "podiums") return b.podiums - a.podiums || a.rank - b.rank;
-    if (sort === "firsts") return b.firstSolves - a.firstSolves || a.rank - b.rank;
-    if (sort === "contests") return b.contests - a.contests || a.rank - b.rank;
-    return a.rank - b.rank;
-  });
-}
-
-function SortBar({ base }: { base: string }) {
-  return (
-    <div className="mb-4 flex flex-wrap gap-2">
-      {["points", "rating", "wins", "podiums", "firsts", "contests"].map((sort) => (
-        <Link key={sort} href={`${base}&sort=${sort}`} className="upload-action-button">{sort}</Link>
-      ))}
-    </div>
   );
 }

@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { Achievement, Contest, ContestAnalytics, ContestCoordinator, ContestParticipation, ContestProblem, ContestStanding, FirstSolve, Player, Prisma, RatingHistory, RatingTitleHistory } from "@prisma/client";
+import type { Achievement, AcademyTopic, Certificate, Contest, ContestAnalytics, ContestCoordinator, ContestEditorial, ContestParticipation, ContestProblem, ContestStanding, FirstSolve, Player, Prisma, RatingHistory, RatingTitleHistory, TrainingRecommendation } from "@prisma/client";
 import { unstable_cache } from "next/cache";
 import { contestStatusAt } from "@/lib/contest-status";
 import { PUBLIC_CONTEST_WHERE, RANKED_CONTEST_WHERE } from "@/lib/contest-filters";
@@ -13,6 +13,7 @@ type ContestWithEntries = Contest & {
   coordinators: ContestCoordinator[];
   problems: (ContestProblem & { firstSolves: (FirstSolve & { player: Player | null })[] })[];
   analytics: ContestAnalytics | null;
+  editorial: ContestEditorial | null;
 };
 type ContestCardWithWinner = Prisma.ContestGetPayload<{ include: typeof contestCardInclude }>;
 type PlayerStandingWithContest = ContestStanding & { contest: Contest };
@@ -41,6 +42,8 @@ export type PlayerProfile = {
   ratings: RatingHistory[];
   titleHistory: RatingTitleHistory[];
   achievements: Achievement[];
+  certificates: Certificate[];
+  recommendations: (TrainingRecommendation & { topic: AcademyTopic | null })[];
   firstSolveHistory: {
     id: string;
     problemCode: string;
@@ -73,6 +76,17 @@ function parseProblemStats(value: Prisma.JsonValue): ProblemStatView[] {
       unsolved: Boolean(row.unsolved),
     };
   }).filter((row) => row.code);
+}
+
+function parseEditorialResources(value: Prisma.JsonValue): { title: string; url: string }[] {
+  if (!Array.isArray(value)) return [];
+  return value.map((item) => {
+    const row = item && typeof item === "object" ? item as Record<string, unknown> : {};
+    return {
+      title: String(row.title ?? ""),
+      url: String(row.url ?? ""),
+    };
+  }).filter((row) => row.title && /^https?:\/\//i.test(row.url));
 }
 
 function toContestView(contest: ContestWithEntries): ContestView {
@@ -110,6 +124,11 @@ function toContestView(contest: ContestWithEntries): ContestView {
       mostSolvedProblemCode: contest.analytics.mostSolvedProblemCode,
       unsolvedProblems: contest.analytics.unsolvedProblems,
       problemStats: parseProblemStats(contest.analytics.problemStats),
+    } : null,
+    editorial: contest.editorial ? {
+      content: contest.editorial.content,
+      resources: parseEditorialResources(contest.editorial.resources),
+      updatedAt: contest.editorial.updatedAt.toISOString(),
     } : null,
     coordinators: contest.coordinators.map((coordinator) => ({
       id: coordinator.id,
@@ -172,6 +191,7 @@ const contestInclude = {
   coordinators: true,
   problems: { include: { firstSolves: { include: { player: true } } } },
   analytics: true,
+  editorial: true,
 };
 
 const contestCardInclude = {
@@ -207,6 +227,7 @@ function toContestCardView(contest: ContestCardWithWinner): ContestView {
     syncMessage: contest.syncMessage,
     totalPoints: contest.totalPoints,
     analytics: null,
+    editorial: null,
     coordinators: [],
     firstSolveRows: [],
     problems: [],
@@ -243,7 +264,7 @@ export async function listContests({ includeHidden = false }: { includeHidden?: 
 
 const cachedContest = unstable_cache(async (idOrSlug: string): Promise<ContestView | null> => {
   const contest = await prisma.contest.findFirst({
-    where: { OR: [{ id: idOrSlug }, { slug: idOrSlug }] },
+    where: { AND: [PUBLIC_CONTEST_WHERE, { OR: [{ id: idOrSlug }, { slug: idOrSlug }] }] },
     include: contestInclude,
   });
   return contest ? toContestView(contest) : null;
@@ -386,6 +407,12 @@ const cachedPlayer = unstable_cache(async (username: string): Promise<PlayerProf
       ratingHistory: { orderBy: { createdAt: "asc" } },
       titleHistory: { orderBy: { earnedAt: "asc" } },
       achievements: { orderBy: { earnedAt: "desc" } },
+      certificates: { orderBy: { issuedAt: "desc" }, take: 12 },
+      recommendations: {
+        orderBy: [{ priority: "asc" }, { createdAt: "desc" }],
+        take: 6,
+        include: { topic: true },
+      },
       firstSolveRows: {
         where: { status: "ASSIGNED", problem: { contest: PUBLIC_CONTEST_WHERE } },
         include: { problem: { include: { contest: true } } },
@@ -423,6 +450,8 @@ const cachedPlayer = unstable_cache(async (username: string): Promise<PlayerProf
     ratings: player.ratingHistory,
     titleHistory: player.titleHistory,
     achievements: player.achievements,
+    certificates: player.certificates,
+    recommendations: player.recommendations,
     firstSolveHistory: player.firstSolveRows.map((firstSolve) => ({
       id: firstSolve.id,
       problemCode: firstSolve.problem.code,

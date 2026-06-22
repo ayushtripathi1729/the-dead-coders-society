@@ -28,6 +28,9 @@ enum CertificateType {
   PARTICIPATION
   WINNER
   CONTEST
+  ACHIEVEMENT
+  SEASON
+  TEAM
 }
 
 enum FirstSolveStatus {
@@ -52,6 +55,29 @@ enum SyncStatus {
 enum PlayerRole {
   MEMBER
   ADMIN
+}
+
+enum AcademyDifficulty {
+  BEGINNER
+  INTERMEDIATE
+  ADVANCED
+}
+
+enum DiscussionScope {
+  GENERAL
+  CONTEST
+  PROBLEM
+}
+
+enum ModerationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum TeamRole {
+  CAPTAIN
+  MEMBER
 }
 
 model Admin {
@@ -101,6 +127,13 @@ model Player {
   uploads         UploadAsset[]
   certificates    Certificate[]
   firstSolveRows  FirstSolve[]
+  academyProgress AcademyProgress[]
+  topicStats      PlayerTopicStat[]
+  recommendations TrainingRecommendation[]
+  teamMemberships TeamMembership[]
+  seasonStandings  SeasonStanding[]
+  institutionId   String?
+  institution     Institution?           @relation(fields: [institutionId], references: [id], onDelete: SetNull)
 
   @@index([currentRating])
   @@index([ratingTitle])
@@ -109,6 +142,7 @@ model Player {
   @@index([yearlyRank])
   @@index([createdAt])
   @@index([updatedAt])
+  @@index([institutionId])
 }
 
 model Contest {
@@ -145,11 +179,16 @@ model Contest {
   coordinators   ContestCoordinator[]
   problems       ContestProblem[]
   analytics      ContestAnalytics?
+  seasonId       String?
+  season         Season?                @relation(fields: [seasonId], references: [id], onDelete: SetNull)
+  editorial      ContestEditorial?
+  discussions    DiscussionThread[]
 
   @@index([visibility, startTime])
   @@index([startTime])
   @@index([updatedAt])
   @@index([createdById])
+  @@index([seasonId])
 }
 
 model ContestProblem {
@@ -415,4 +454,247 @@ model Certificate {
 
   @@index([playerUsername, issuedAt])
   @@index([contestId, issuedAt])
+}
+
+model AcademyTopic {
+  id              String                   @id
+  slug            String                   @unique
+  title           String
+  overview        String
+  sortOrder       Int                      @default(0)
+  createdAt       DateTime                 @default(now())
+  updatedAt       DateTime                 @updatedAt
+  resources       AcademyResource[]
+  problems        AcademyProblem[]
+  progress        AcademyProgress[]
+  topicStats      PlayerTopicStat[]
+  recommendations TrainingRecommendation[]
+
+  @@index([sortOrder])
+}
+
+model AcademyResource {
+  id        String       @id @default(cuid())
+  topicId   String
+  title     String
+  url       String
+  kind      String       @default("ARTICLE")
+  sortOrder Int          @default(0)
+  topic     AcademyTopic @relation(fields: [topicId], references: [id], onDelete: Cascade)
+
+  @@index([topicId, sortOrder])
+}
+
+model AcademyProblem {
+  id         String            @id @default(cuid())
+  topicId    String
+  title      String
+  url        String?
+  difficulty AcademyDifficulty @default(BEGINNER)
+  rating     Int               @default(800)
+  sortOrder  Int               @default(0)
+  topic      AcademyTopic      @relation(fields: [topicId], references: [id], onDelete: Cascade)
+
+  @@index([topicId, difficulty, sortOrder])
+}
+
+model AcademyProgress {
+  id              String       @id @default(cuid())
+  playerUsername  String
+  topicId         String
+  completed       Int          @default(0)
+  total           Int          @default(0)
+  lastPracticedAt DateTime?
+  updatedAt       DateTime     @updatedAt
+  player          Player       @relation(fields: [playerUsername], references: [username], onDelete: Cascade)
+  topic           AcademyTopic @relation(fields: [topicId], references: [id], onDelete: Cascade)
+
+  @@unique([playerUsername, topicId])
+  @@index([topicId, updatedAt])
+}
+
+model PlayerTopicStat {
+  id             String       @id @default(cuid())
+  playerUsername String
+  topicId        String
+  attempts       Int          @default(0)
+  solved         Int          @default(0)
+  strengthScore  Float        @default(0)
+  updatedAt      DateTime     @updatedAt
+  player         Player       @relation(fields: [playerUsername], references: [username], onDelete: Cascade)
+  topic          AcademyTopic @relation(fields: [topicId], references: [id], onDelete: Cascade)
+
+  @@unique([playerUsername, topicId])
+  @@index([playerUsername, strengthScore])
+}
+
+model TrainingRecommendation {
+  id             String            @id @default(cuid())
+  playerUsername String
+  topicId        String?
+  problemId      String?
+  reason         String
+  nextDifficulty AcademyDifficulty @default(BEGINNER)
+  priority       Int               @default(0)
+  createdAt      DateTime          @default(now())
+  player         Player            @relation(fields: [playerUsername], references: [username], onDelete: Cascade)
+  topic          AcademyTopic?     @relation(fields: [topicId], references: [id], onDelete: SetNull)
+
+  @@index([playerUsername, priority])
+  @@index([topicId])
+}
+
+model Season {
+  id            String           @id
+  name          String
+  slug          String           @unique
+  startsAt      DateTime
+  endsAt        DateTime
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+  contests      Contest[]
+  standings     SeasonStanding[]
+  teamStandings TeamStanding[]
+
+  @@index([startsAt, endsAt])
+}
+
+model SeasonStanding {
+  id             String   @id @default(cuid())
+  seasonId       String
+  playerUsername String
+  rank           Int
+  points         Int      @default(0)
+  contests       Int      @default(0)
+  wins           Int      @default(0)
+  solved         Int      @default(0)
+  rating         Int      @default(1200)
+  updatedAt      DateTime @updatedAt
+  season         Season   @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+  player         Player   @relation(fields: [playerUsername], references: [username], onDelete: Cascade)
+
+  @@unique([seasonId, playerUsername])
+  @@index([seasonId, rank])
+  @@index([playerUsername])
+}
+
+model Team {
+  id            String            @id @default(cuid())
+  name          String
+  slug          String            @unique
+  institutionId String?
+  rating        Int               @default(1200)
+  points        Int               @default(0)
+  wins          Int               @default(0)
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+  institution   Institution?      @relation(fields: [institutionId], references: [id], onDelete: SetNull)
+  memberships   TeamMembership[]
+  achievements  TeamAchievement[]
+  standings     TeamStanding[]
+
+  @@index([rating])
+  @@index([points])
+  @@index([institutionId])
+}
+
+model TeamMembership {
+  id             String   @id @default(cuid())
+  teamId         String
+  playerUsername String
+  role           TeamRole @default(MEMBER)
+  joinedAt       DateTime @default(now())
+  team           Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  player         Player   @relation(fields: [playerUsername], references: [username], onDelete: Cascade)
+
+  @@unique([teamId, playerUsername])
+  @@index([playerUsername])
+}
+
+model TeamStanding {
+  id        String   @id @default(cuid())
+  seasonId  String
+  teamId    String
+  rank      Int
+  points    Int      @default(0)
+  rating    Int      @default(1200)
+  wins      Int      @default(0)
+  updatedAt DateTime @updatedAt
+  season    Season   @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+  team      Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  @@unique([seasonId, teamId])
+  @@index([seasonId, rank])
+}
+
+model TeamAchievement {
+  id       String   @id @default(cuid())
+  teamId   String
+  code     String
+  title    String
+  earnedAt DateTime @default(now())
+  team     Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  @@unique([teamId, code])
+}
+
+model ContestEditorial {
+  id        String              @id @default(cuid())
+  contestId String              @unique
+  content   String              @default("")
+  resources Json                @default("[]")
+  updatedAt DateTime            @updatedAt
+  contest   Contest             @relation(fields: [contestId], references: [id], onDelete: Cascade)
+  revisions EditorialRevision[]
+}
+
+model EditorialRevision {
+  id          String           @id @default(cuid())
+  editorialId String
+  content     String
+  version     Int
+  createdAt   DateTime         @default(now())
+  editorial   ContestEditorial @relation(fields: [editorialId], references: [id], onDelete: Cascade)
+
+  @@unique([editorialId, version])
+}
+
+model DiscussionThread {
+  id          String           @id @default(cuid())
+  scope       DiscussionScope  @default(GENERAL)
+  contestId   String?
+  problemCode String?
+  title       String
+  status      ModerationStatus @default(APPROVED)
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  contest     Contest?         @relation(fields: [contestId], references: [id], onDelete: Cascade)
+  posts       DiscussionPost[]
+
+  @@index([scope, status, updatedAt])
+  @@index([contestId])
+}
+
+model DiscussionPost {
+  id        String           @id @default(cuid())
+  threadId  String
+  author    String
+  body      String
+  status    ModerationStatus @default(PENDING)
+  createdAt DateTime         @default(now())
+  thread    DiscussionThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+
+  @@index([threadId, status, createdAt])
+  @@index([status, createdAt])
+}
+
+model Institution {
+  id          String   @id @default(cuid())
+  name        String
+  slug        String   @unique
+  departments String[] @default([])
+  batches     String[] @default([])
+  createdAt   DateTime @default(now())
+  players     Player[]
+  teams       Team[]
 }

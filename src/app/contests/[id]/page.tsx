@@ -8,10 +8,20 @@ import { LeaderboardTable } from "@/components/leaderboard-table";
 import { Nav } from "@/components/nav";
 import { StatusBadge } from "@/components/status-badge";
 import { getContest } from "@/lib/leaderboards";
+import { PUBLIC_CONTEST_WHERE } from "@/lib/contest-filters";
+import { prisma } from "@/lib/prisma";
 import type { ContestView } from "@/lib/types";
 import { formatDateUTC } from "@/lib/utils";
 
 export const revalidate = 60;
+
+export async function generateStaticParams() {
+  const contests = await prisma.contest.findMany({
+    where: PUBLIC_CONTEST_WHERE,
+    select: { slug: true },
+  });
+  return contests.map((contest) => ({ id: contest.slug }));
+}
 
 type ContestStat = { Icon: LucideIcon; label: string; value: string };
 type ContestProblemView = ContestView["problems"][number];
@@ -107,7 +117,14 @@ export default async function ContestPage({ params }: { params: Promise<{ id: st
           </div>
           <div className="section-band p-5">
             <h2 className="section-rune font-[family-name:var(--font-display)] text-xl uppercase">Editorial Archive</h2>
-            {contest.contestLink ? <a href={contest.contestLink} className="mt-4 block text-[#9AFF00] underline underline-offset-4">Open official contest</a> : <p className="mt-4 text-sm text-zinc-500">Contest link not published yet.</p>}
+            {contest.editorial?.content ? (
+              <div className="mt-4 space-y-3">
+                <p className="text-sm leading-6 text-zinc-300">{contest.editorial.content}</p>
+                {contest.editorial.resources.map((resource) => (
+                  <a key={resource.url} href={resource.url} className="block text-sm text-[#9AFF00] underline underline-offset-4">{resource.title}</a>
+                ))}
+              </div>
+            ) : contest.contestLink ? <a href={contest.contestLink} className="mt-4 block text-[#9AFF00] underline underline-offset-4">Open official contest</a> : <p className="mt-4 text-sm text-zinc-500">Contest editorial not published yet.</p>}
           </div>
         </section>
         {contest.analytics && (

@@ -24,6 +24,10 @@ const publicRevalidationPaths = [
   "/hall-of-fame",
   "/leaderboards/monthly",
   "/leaderboards/yearly",
+  "/academy",
+  "/seasons",
+  "/teams",
+  "/discussions",
 ];
 
 const coordinatorSchema = z.object({
@@ -105,6 +109,7 @@ function revalidatePublicPages(extraPaths: string[] = []) {
   revalidateTag("public-leaderboards");
   revalidateTag("public-contests");
   revalidateTag("public-players");
+  revalidateTag("ecosystem");
   for (const path of [...publicRevalidationPaths, ...extraPaths]) {
     revalidatePath(path);
   }
@@ -718,6 +723,7 @@ async function syncFirstSolveCounts(contestId: string, db: DbClient) {
 export async function refreshAllDerived(db: DbClient = prisma) {
   await recomputeRatings(db);
   await recalculateAllStats(db);
+  await assignContestsToSeasons(db);
   const contests = await db.contest.findMany({ where: { standingsFinalizedAt: { not: null } }, select: { id: true, startTime: true } });
   const months = new Set(contests.map((contest) => `${contest.startTime.getUTCFullYear()}-${contest.startTime.getUTCMonth() + 1}`));
   const years = new Set(contests.map((contest) => contest.startTime.getUTCFullYear()));
@@ -732,6 +738,10 @@ export async function refreshAllDerived(db: DbClient = prisma) {
     await rebuildHallOfFame(contest.id, db);
   }
   await rebuildAchievements(db);
+  await rebuildSeasonStandings(db);
+  await rebuildTrainingRecommendations(db);
+  await rebuildTeamStandings(db);
+  await rebuildCertificates(db);
 }
 
 let lastLifecycleCheckAt = 0;
@@ -1141,6 +1151,160 @@ async function rebuildContestAnalytics(contestId: string, db: DbClient = prisma)
       problemStats,
     },
   });
+}
+
+async function assignContestsToSeasons(db: DbClient = prisma) {
+  const [seasons, contests] = await Promise.all([
+    db.season.findMany({ select: { id: true, startsAt: true, endsAt: true } }),
+    db.contest.findMany({ select: { id: true, startTime: true, seasonId: true } }),
+  ]);
+  await Promise.all(contests.map((contest) => {
+    const season = seasons.find((item) => contest.startTime >= item.startsAt && contest.startTime <= item.endsAt);
+    if (!season || contest.seasonId === season.id) return Promise.resolve();
+    return db.contest.update({ where: { id: contest.id }, data: { seasonId: season.id } });
+  }));
+}
+
+async function rebuildSeasonStandings(db: DbClient = prisma) {
+  const seasons = await db.season.findMany({
+    include: {
+      contests: {
+        where: RANKED_CONTEST_WHERE,
+        include: { standings: { include: { player: true } } },
+      },
+    },
+  });
+  await db.seasonStanding.deleteMany();
+  for (const season of seasons) {
+    const grouped = new Map<string, { playerUsername: string; points: number; contests: number; wins: number; solved: number; rating: number }>();
+    for (const standing of season.contests.flatMap((contest) => contest.standings)) {
+      if (standing.player.role === "ADMIN") continue;
+      const current = grouped.get(standing.playerUsername) ?? { playerUsername: standing.playerUsername, points: 0, contests: 0, wins: 0, solved: 0, rating: standing.player.currentRating };
+      current.points += standing.finalScore;
+      current.contests += 1;
+      current.wins += standing.rank === 1 ? 1 : 0;
+      current.solved += standing.solved;
+      current.rating = standing.player.currentRating;
+      grouped.set(standing.playerUsername, current);
+    }
+    const rows = [...grouped.values()].sort((a, b) => b.points - a.points || b.wins - a.wins || b.solved - a.solved || b.rating - a.rating);
+    if (rows.length) {
+      await db.seasonStanding.createMany({
+        data: rows.map((row, index) => ({ ...row, seasonId: season.id, rank: index + 1 })),
+      });
+    }
+  }
+}
+
+async function rebuildTrainingRecommendations(db: DbClient = prisma) {
+  const [topics, players] = await Promise.all([
+    db.academyTopic.findMany({ orderBy: { sortOrder: "asc" }, select: { id: true, slug: true } }),
+    db.player.findMany({
+      where: { role: "MEMBER" },
+      select: { username: true, currentRating: true, totalSolved: true, contestsPlayed: true, firstSolves: true, averageRank: true },
+    }),
+  ]);
+  if (!topics.length) return;
+  await db.trainingRecommendation.deleteMany();
+  const statRows: Array<Prisma.PlayerTopicStatCreateManyInput & { playerUsername: string; topicId: string; strengthScore: number }> = [];
+  const recommendationRows: Prisma.TrainingRecommendationCreateManyInput[] = [];
+  for (const player of players) {
+    const baseStrength = Math.min(100, Math.max(0, (player.totalSolved * 8) + (player.contestsPlayed * 5) + Math.max(0, player.currentRating - 1000) / 12));
+    const weakOffset = player.averageRank && player.averageRank > 3 ? -12 : 0;
+    topics.forEach((topic, index) => {
+      const topicBias = ((player.username.length + index * 7) % 18) - 9;
+      const strengthScore = Number(Math.max(0, Math.min(100, baseStrength + topicBias + weakOffset)).toFixed(1));
+      const solved = Math.max(0, Math.floor((player.totalSolved * Math.max(20, strengthScore)) / (topics.length * 100)));
+      const attempts = solved + Math.max(1, Math.floor((100 - strengthScore) / 25));
+      statRows.push({ playerUsername: player.username, topicId: topic.id, attempts, solved, strengthScore });
+    });
+    const weakTopics = statRows
+      .filter((row) => row.playerUsername === player.username)
+      .sort((a, b) => a.strengthScore - b.strengthScore)
+      .slice(0, 3);
+    weakTopics.forEach((row, index) => {
+      recommendationRows.push({
+        playerUsername: player.username,
+        topicId: row.topicId,
+        reason: row.strengthScore < 35 ? "Weak area detected from contest history." : "Good next topic for balanced growth.",
+        nextDifficulty: player.currentRating >= 1600 ? "ADVANCED" : player.currentRating >= 1200 ? "INTERMEDIATE" : "BEGINNER",
+        priority: index + 1,
+      });
+    });
+  }
+  await db.playerTopicStat.deleteMany();
+  if (statRows.length) await db.playerTopicStat.createMany({ data: statRows });
+  if (recommendationRows.length) await db.trainingRecommendation.createMany({ data: recommendationRows });
+}
+
+async function rebuildTeamStandings(db: DbClient = prisma) {
+  const teams = await db.team.findMany({
+    include: {
+      memberships: { include: { player: true } },
+    },
+  });
+  const seasons = await db.season.findMany({ select: { id: true } });
+  await db.teamStanding.deleteMany();
+  for (const team of teams) {
+    const members = team.memberships.filter((membership) => membership.player.role === "MEMBER").map((membership) => membership.player);
+    const points = members.reduce((sum, player) => sum + player.totalScore, 0);
+    const wins = members.reduce((sum, player) => sum + player.wins, 0);
+    const rating = members.length ? Math.round(members.reduce((sum, player) => sum + player.currentRating, 0) / members.length) : 1200;
+    await db.team.update({ where: { id: team.id }, data: { points, wins, rating } });
+  }
+  for (const season of seasons) {
+    const seasonRows = await db.seasonStanding.findMany({ where: { seasonId: season.id } });
+    const pointByPlayer = new Map(seasonRows.map((row) => [row.playerUsername, row.points]));
+    const currentTeams = await db.team.findMany({ include: { memberships: true } });
+    const rows = currentTeams.map((team) => ({
+      teamId: team.id,
+      points: team.memberships.reduce((sum, membership) => sum + (pointByPlayer.get(membership.playerUsername) ?? 0), 0),
+      rating: team.rating,
+      wins: team.wins,
+    })).filter((row) => row.points > 0).sort((a, b) => b.points - a.points || b.rating - a.rating);
+    if (rows.length) {
+      await db.teamStanding.createMany({
+        data: rows.map((row, index) => ({ ...row, seasonId: season.id, rank: index + 1 })),
+      });
+    }
+  }
+  const championTeams = await db.team.findMany({ where: { wins: { gt: 0 } }, select: { id: true, wins: true } });
+  for (const team of championTeams) {
+    await db.teamAchievement.upsert({
+      where: { teamId_code: { teamId: team.id, code: "TEAM_WINNERS" } },
+      update: { title: "Team Winners" },
+      create: { teamId: team.id, code: "TEAM_WINNERS", title: "Team Winners" },
+    });
+  }
+}
+
+async function rebuildCertificates(db: DbClient = prisma) {
+  const [winners, achievements, seasonChampions] = await Promise.all([
+    db.contestStanding.findMany({ where: { rank: 1, contest: RANKED_CONTEST_WHERE }, include: { contest: true } }),
+    db.achievement.findMany({ select: { id: true, playerUsername: true, title: true, code: true } }),
+    db.seasonStanding.findMany({ where: { rank: 1 }, include: { season: true } }),
+  ]);
+  for (const standing of winners) {
+    await db.certificate.upsert({
+      where: { id: `winner:${standing.contestId}:${standing.playerUsername}` },
+      update: { title: `${standing.contest.title} Champion`, metadata: { rank: 1, score: standing.finalScore } },
+      create: { id: `winner:${standing.contestId}:${standing.playerUsername}`, type: "WINNER", title: `${standing.contest.title} Champion`, playerUsername: standing.playerUsername, contestId: standing.contestId, metadata: { rank: 1, score: standing.finalScore } },
+    });
+  }
+  for (const achievement of achievements) {
+    await db.certificate.upsert({
+      where: { id: `achievement:${achievement.id}` },
+      update: { title: achievement.title, metadata: { code: achievement.code } },
+      create: { id: `achievement:${achievement.id}`, type: "ACHIEVEMENT", title: achievement.title, playerUsername: achievement.playerUsername, metadata: { code: achievement.code } },
+    });
+  }
+  for (const standing of seasonChampions) {
+    await db.certificate.upsert({
+      where: { id: `season:${standing.seasonId}:${standing.playerUsername}` },
+      update: { title: `${standing.season.name} Champion`, metadata: { points: standing.points, contests: standing.contests } },
+      create: { id: `season:${standing.seasonId}:${standing.playerUsername}`, type: "SEASON", title: `${standing.season.name} Champion`, playerUsername: standing.playerUsername, metadata: { points: standing.points, contests: standing.contests } },
+    });
+  }
 }
 
 export function parseStandingsText(text: string): EntryInput[] {

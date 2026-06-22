@@ -5,6 +5,9 @@ export function Nav() {
   const links = [
     ["Contests", "/contests"],
     ["Players", "/players"],
+    ["Academy", "/academy"],
+    ["Seasons", "/seasons"],
+    ["Teams", "/teams"],
     ["Monthly", "/leaderboards/monthly"],
     ["Yearly", "/leaderboards/yearly"],
   ];
@@ -21,7 +24,7 @@ export function Nav() {
             The Dead Coders Society
           </span>
         </Link>
-        <div className="hidden items-center gap-7 font-[family-name:var(--font-display)] text-[10px] uppercase tracking-[0.24em] text-zinc-400 md:flex">
+        <div className="hidden items-center gap-5 font-[family-name:var(--font-display)] text-[10px] uppercase tracking-[0.18em] text-zinc-400 lg:flex">
           {links.map(([label, href]) => (
             <Link key={href} href={href} className="relative transition hover:text-[#9AFF00] hover:drop-shadow-[0_0_10px_#9AFF00]">
               {label}

@@ -106,6 +106,11 @@ export type ContestView = Omit<Contest, "bannerPoster" | "entries"> & {
       unsolved: boolean;
     }[];
   } | null;
+  editorial: {
+    content: string;
+    resources: { title: string; url: string }[];
+    updatedAt: string;
+  } | null;
   entries: ContestEntryView[];
 };
 

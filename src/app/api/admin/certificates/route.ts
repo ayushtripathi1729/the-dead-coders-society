@@ -6,7 +6,7 @@ import { readBody } from "@/lib/request";
 import { uploadDataUriToCloudinary } from "@/server/uploads/cloudinary";
 
 const certificateSchema = z.object({
-  type: z.enum(["PARTICIPATION", "WINNER", "CONTEST"]),
+  type: z.enum(["PARTICIPATION", "WINNER", "CONTEST", "ACHIEVEMENT", "SEASON", "TEAM"]),
   title: z.string().min(2).max(140),
   playerUsername: z.string().trim().min(1).max(48).regex(/^[a-zA-Z0-9_.+-]+$/).optional(),
   contestId: z.string().trim().min(1).optional(),

@@ -11,7 +11,7 @@ import { formatDateUTC } from "@/lib/utils";
 
 type ActivityLogView = { id: string; action: string; entity: string; entityId: string | null; createdAt: string };
 type PlayerAdminView = { id: string; fullName: string; username: string; year: number; email: string | null; branchCourse: string | null; avatar: string | null; bio: string | null; role: "MEMBER" | "ADMIN"; currentRating: number; peakRating: number; totalSolved: number; wins: number; firstSolves: number; totalScore: number };
-type AdminAnalyticsView = { totalPlayers: number; totalContests: number; totalSubmissions: number; averageParticipation: number; mostActivePlayer: string; topRatedPlayer: string };
+type AdminAnalyticsView = { totalPlayers: number; totalContests: number; totalSubmissions: number; averageParticipation: number; mostActivePlayer: string; topRatedPlayer: string; academyTopics: number; seasonCount: number; teamCount: number; pendingDiscussions: number; issuedCertificates: number };
 type CoordinatorDraft = { name: string; role: string; email: string; phone: string; discord: string };
 type FirstSolveDraftStatus = "ASSIGNED" | "UNSOLVED" | "NONE";
 type ProblemDraft = { code: string; title: string; points: number; firstSolveUsername: string; firstSolveStatus: FirstSolveDraftStatus };
@@ -391,6 +391,11 @@ export function AdminWorkbench({ contests, activityLogs, players, analytics }: {
                 <Operation label="Avg Participation" value={analytics.averageParticipation} />
                 <Operation label="Most Active Player" value={analytics.mostActivePlayer} />
                 <Operation label="Top Rated Player" value={analytics.topRatedPlayer} />
+                <Operation label="Academy Topics" value={analytics.academyTopics} />
+                <Operation label="Seasons" value={analytics.seasonCount} />
+                <Operation label="Teams" value={analytics.teamCount} />
+                <Operation label="Pending Discussions" value={analytics.pendingDiscussions} />
+                <Operation label="Certificates" value={analytics.issuedCertificates} />
                 <Operation label="Entries" value={activeContest?.entries.length ?? 0} />
                 <Operation label="Status" value={activeContest?.status ?? "N/A"} />
                 <Operation label="Override" value={activeContest?.statusOverride.replace("FORCE_", "") ?? "N/A"} />
