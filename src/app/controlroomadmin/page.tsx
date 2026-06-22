@@ -31,6 +31,9 @@ export default async function ControlRoomAdminPage({ searchParams }: { searchPar
         select: { id: true, fullName: true, username: true, year: true, email: true, branchCourse: true, avatar: true, bio: true, role: true, currentRating: true, peakRating: true, totalSolved: true, wins: true, firstSolves: true, totalScore: true },
       })
     : [];
+  const analytics = isAuthed
+    ? await controlRoomAnalytics(players)
+    : { totalPlayers: 0, totalContests: 0, totalSubmissions: 0, averageParticipation: 0, mostActivePlayer: "N/A", topRatedPlayer: "N/A" };
 
   return (
     <>
@@ -77,10 +80,28 @@ export default async function ControlRoomAdminPage({ searchParams }: { searchPar
               contests={contests}
               activityLogs={activityLogs.map((log: ActivityLogSelect) => ({ ...log, createdAt: log.createdAt.toISOString() }))}
               players={players}
+              analytics={analytics}
             />
           </>
         )}
       </main>
     </>
   );
+}
+
+async function controlRoomAnalytics(players: PlayerSelect[]) {
+  const [totalContests, totalSubmissions, grouped] = await Promise.all([
+    prisma.contest.count(),
+    prisma.contestStanding.count(),
+    prisma.contestStanding.groupBy({ by: ["playerUsername"], _count: { playerUsername: true }, orderBy: { _count: { playerUsername: "desc" } }, take: 1 }),
+  ]);
+  const topRated = [...players].sort((a, b) => b.currentRating - a.currentRating)[0];
+  return {
+    totalPlayers: players.length,
+    totalContests,
+    totalSubmissions,
+    averageParticipation: totalContests ? Number((totalSubmissions / totalContests).toFixed(1)) : 0,
+    mostActivePlayer: grouped[0]?.playerUsername ?? "N/A",
+    topRatedPlayer: topRated ? `${topRated.fullName} (${topRated.currentRating})` : "N/A",
+  };
 }

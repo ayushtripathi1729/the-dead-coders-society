@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import Image from "next/image";
-import { Calendar, Gauge, Mail, Phone, Trophy, Users } from "lucide-react";
+import type { ReactNode } from "react";
+import { BarChart3, Calendar, Gauge, Mail, Phone, Target, Trophy, Users } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { ArenaBackground } from "@/components/arena-background";
 import { LeaderboardTable } from "@/components/leaderboard-table";
@@ -109,6 +110,43 @@ export default async function ContestPage({ params }: { params: Promise<{ id: st
             {contest.contestLink ? <a href={contest.contestLink} className="mt-4 block text-[#9AFF00] underline underline-offset-4">Open official contest</a> : <p className="mt-4 text-sm text-zinc-500">Contest link not published yet.</p>}
           </div>
         </section>
+        {contest.analytics && (
+          <section className="section-band mt-8 p-5">
+            <div className="flex items-center gap-3">
+              <BarChart3 className="size-5 text-[#9AFF00]" />
+              <h2 className="section-rune font-[family-name:var(--font-display)] text-xl uppercase">Contest Analytics</h2>
+            </div>
+            <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <AnalyticsMetric label="Participants" value={contest.analytics.participants} />
+              <AnalyticsMetric label="Total Solves" value={contest.analytics.totalSolves} />
+              <AnalyticsMetric label="Average Score" value={contest.analytics.averageScore} />
+              <AnalyticsMetric label="Average Solved" value={contest.analytics.averageSolved} />
+              <AnalyticsMetric label="Hardest Problem" value={contest.analytics.hardestProblemCode ?? "N/A"} />
+              <AnalyticsMetric label="Most Solved" value={contest.analytics.mostSolvedProblemCode ?? "N/A"} />
+              <AnalyticsMetric label="Fastest Solver" value={contest.analytics.fastestUsername ? `@${contest.analytics.fastestUsername}` : "N/A"} />
+              <AnalyticsMetric label="Unsolved" value={contest.analytics.unsolvedProblems.join(", ") || "None"} />
+            </div>
+            <div className="mt-5 overflow-x-auto">
+              <table className="w-full min-w-[760px] text-left text-sm">
+                <thead className="font-[family-name:var(--font-display)] text-[10px] uppercase tracking-[0.18em] text-zinc-500">
+                  <tr><th className="px-3 py-2">Problem</th><th className="px-3 py-2">Points</th><th className="px-3 py-2">Solves</th><th className="px-3 py-2">Solve Rate</th><th className="px-3 py-2">First Solver</th><th className="px-3 py-2">State</th></tr>
+                </thead>
+                <tbody>
+                  {contest.analytics.problemStats.map((problem) => (
+                    <tr key={problem.code} className="border-t border-white/10">
+                      <td className="px-3 py-3 font-[family-name:var(--font-display)] text-white">{problem.code} {problem.title ? `- ${problem.title}` : ""}</td>
+                      <td className="px-3 py-3">{problem.points}</td>
+                      <td className="px-3 py-3">{problem.solves}</td>
+                      <td className="px-3 py-3">{problem.solveRate}%</td>
+                      <td className="px-3 py-3 text-[#9AFF00]">{problem.firstSolver ? `@${problem.firstSolver}` : "N/A"}</td>
+                      <td className="px-3 py-3">{problem.unsolved ? "Unsolved" : "Solved"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        )}
         <section className="section-band mt-8 p-5">
           <div className="flex items-center gap-3">
             <Users className="size-5 text-[#9AFF00]" />
@@ -137,5 +175,15 @@ export default async function ContestPage({ params }: { params: Promise<{ id: st
         </section>
       </main>
     </>
+  );
+}
+
+function AnalyticsMetric({ label, value }: { label: string; value: ReactNode }) {
+  return (
+    <div className="clip-arena border border-[#c0c0c0]/15 bg-black/45 p-4">
+      <Target className="size-4 text-[#9AFF00]" />
+      <p className="mt-2 text-[10px] uppercase tracking-[0.18em] text-zinc-500">{label}</p>
+      <p className="mt-1 min-w-0 truncate font-[family-name:var(--font-display)] text-lg text-white">{value}</p>
+    </div>
   );
 }

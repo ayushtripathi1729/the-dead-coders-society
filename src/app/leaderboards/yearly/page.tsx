@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { Award, Bolt, Crown } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { ArenaBackground } from "@/components/arena-background";
@@ -5,14 +6,17 @@ import { LeaderboardTable } from "@/components/leaderboard-table";
 import { Nav } from "@/components/nav";
 import { Podium } from "@/components/podium";
 import { yearlyLeaderboard } from "@/lib/leaderboards";
+import type { LeaderboardRow } from "@/lib/types";
 
 export const revalidate = 60;
 
 type YearlyStat = { Icon: LucideIcon; label: string; name?: string; value?: number };
 
-export default async function YearlyPage() {
+export default async function YearlyPage({ searchParams }: { searchParams: Promise<{ sort?: string }> }) {
+  const params = await searchParams;
   const activeYear = new Date().getUTCFullYear();
   const board = await yearlyLeaderboard(activeYear);
+  const rows = sortRows(board.rows, params.sort);
   const top = board.rows[0];
   const mostWins = [...board.rows].sort((a, b) => b.wins - a.wins)[0];
   const firsts = [...board.rows].sort((a, b) => b.firstSolves - a.firstSolves)[0];
@@ -47,8 +51,29 @@ export default async function YearlyPage() {
             </div>
           ))}
         </section>
-        <div className="mt-8">{board.rows.length ? <LeaderboardTable type="aggregate" rows={board.rows} /> : null}</div>
+        <div className="mt-8">{board.rows.length ? <><SortBar /><LeaderboardTable type="aggregate" rows={rows} /></> : null}</div>
       </main>
     </>
+  );
+}
+
+function sortRows(rows: LeaderboardRow[], sort = "points") {
+  return [...rows].sort((a, b) => {
+    if (sort === "rating") return b.rating - a.rating || a.rank - b.rank;
+    if (sort === "wins") return b.wins - a.wins || a.rank - b.rank;
+    if (sort === "podiums") return b.podiums - a.podiums || a.rank - b.rank;
+    if (sort === "firsts") return b.firstSolves - a.firstSolves || a.rank - b.rank;
+    if (sort === "contests") return b.contests - a.contests || a.rank - b.rank;
+    return a.rank - b.rank;
+  });
+}
+
+function SortBar() {
+  return (
+    <div className="mb-4 flex flex-wrap gap-2">
+      {["points", "rating", "wins", "podiums", "firsts", "contests"].map((sort) => (
+        <Link key={sort} href={`/leaderboards/yearly?sort=${sort}`} className="upload-action-button">{sort}</Link>
+      ))}
+    </div>
   );
 }

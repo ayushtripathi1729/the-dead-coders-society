@@ -19,6 +19,9 @@ export type ContestEntry = {
   bonusPoints: number;
   finalScore: number;
   firstSolves: number;
+  rating?: number;
+  ratingDelta?: number;
+  ratingTitle?: string;
 };
 
 export type ContestEntryView = ContestEntry & {
@@ -83,6 +86,26 @@ export type ContestView = Omit<Contest, "bannerPoster" | "entries"> & {
       player: { username: string; fullName: string } | null;
     }[];
   }[];
+  analytics: {
+    participants: number;
+    totalSolves: number;
+    averageScore: number;
+    averageSolved: number;
+    winnerUsername: string | null;
+    fastestUsername: string | null;
+    hardestProblemCode: string | null;
+    mostSolvedProblemCode: string | null;
+    unsolvedProblems: string[];
+    problemStats: {
+      code: string;
+      title: string | null;
+      points: number;
+      solves: number;
+      solveRate: number;
+      firstSolver: string | null;
+      unsolved: boolean;
+    }[];
+  } | null;
   entries: ContestEntryView[];
 };
 
@@ -99,6 +122,7 @@ export type LeaderboardRow = {
   penalty: number;
   firstSolves: number;
   rating: number;
+  ratingTitle: string;
   averagePlacement: number;
   bestPlacement: number;
 };

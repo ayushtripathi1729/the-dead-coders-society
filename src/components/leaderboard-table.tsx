@@ -7,30 +7,10 @@ type Props =
   | { type: "contest"; rows: ContestEntry[] }
   | { type: "aggregate"; rows: LeaderboardRow[] };
 
-const aggregateHeadings = ["Rank", "Full Name", "Username", "Year", "Total Score", "Contests", "Wins", "Solved", "First Solves", "Average Placement"];
+const aggregateHeadings = ["Rank", "Full Name", "Username", "Title", "Rating", "Total Score", "Contests", "Wins", "Top 3", "Solved", "First Solves", "Average Placement"];
 const contestHeadings = ["Rank", "Full Name", "Username", "Year", "Solved", "Solved Problems", "Penalty", "Raw Score", "Contest Score", "Bonus", "Final Score", "First Solves"];
 
 export function LeaderboardTable(props: Props) {
-  const rows =
-    props.type === "contest"
-      ? props.rows.map((row) => ({
-          rank: row.rank,
-          fullName: row.fullName,
-          username: row.username,
-          year: row.year,
-          totalScore: row.finalScore,
-          rawScore: row.rawScore,
-          contestScore: row.contestScore,
-          bonusPoints: row.bonusPoints,
-          penalty: row.penalty,
-          contests: 1,
-          wins: row.rank === 1 ? 1 : 0,
-          solved: row.solved,
-          solvedProblems: row.solvedProblems,
-          firstSolves: row.firstSolves,
-          averagePlacement: row.rank,
-        }))
-      : props.rows.map((row) => ({ ...row, rawScore: null, contestScore: null, bonusPoints: null, solvedProblems: [] }));
   const headings = props.type === "contest" ? contestHeadings : aggregateHeadings;
 
   return (
@@ -55,43 +35,57 @@ export function LeaderboardTable(props: Props) {
               ))}
             </tr>
           </thead>
-          <tbody>
-            {rows.map((row) => (
-              <tr key={row.username} className="score-row group outline outline-1 outline-[#c0c0c0]/10 transition duration-300 hover:bg-[#9AFF00]/10 hover:outline-[#9AFF00]/45 hover:shadow-[0_0_24px_rgba(154,255,0,.12)]">
-                <td className="px-4 py-3 font-[family-name:var(--font-display)] text-[#F3C55B]">
-                  <span className="inline-flex items-center gap-2"><Code2 className="size-3.5" />#{row.rank}</span>
-                </td>
-                <td className="px-4 py-3 font-semibold text-white">{row.fullName}</td>
-                <td className="px-4 py-3">
-                  <Link href={`/players/${row.username}`} className="font-[family-name:var(--font-display)] font-semibold uppercase text-zinc-200 transition group-hover:text-[#9AFF00]">
-                    {row.username}
-                  </Link>
-                </td>
-                <td className="px-4 py-3 text-zinc-300">{yearLabel(row.year ?? 1)}</td>
-                {props.type === "contest" ? (
-                  <>
-                    <td className="px-4 py-3">{row.solved}</td>
-                    <td className="px-4 py-3">{row.solvedProblems.join(", ") || "None"}</td>
-                    <td className="px-4 py-3">{row.penalty}</td>
-                    <td className="px-4 py-3">{row.rawScore}</td>
-                    <td className="px-4 py-3">{row.contestScore}</td>
-                    <td className="px-4 py-3 text-[#F3C55B]">+{row.bonusPoints}</td>
-                    <td className="px-4 py-3 font-[family-name:var(--font-display)] text-lg font-bold text-[#9AFF00] drop-shadow-[0_0_10px_#9AFF00]">{row.totalScore}</td>
-                    <td className="px-4 py-3 text-[#8E2BFF]">{row.firstSolves}</td>
-                  </>
-                ) : (
-                  <>
-                    <td className="px-4 py-3 font-[family-name:var(--font-display)] text-lg font-bold text-[#9AFF00] drop-shadow-[0_0_10px_#9AFF00]">{row.totalScore}</td>
-                    <td className="px-4 py-3">{row.contests}</td>
-                    <td className="px-4 py-3 text-[#F3C55B]">{row.wins}</td>
-                    <td className="px-4 py-3">{row.solved}</td>
-                    <td className="px-4 py-3 text-[#8E2BFF]">{row.firstSolves}</td>
-                    <td className="px-4 py-3">{row.averagePlacement}</td>
-                  </>
-                )}
-              </tr>
-            ))}
-          </tbody>
+          {props.type === "contest" ? (
+            <tbody>
+              {props.rows.map((row) => (
+                <tr key={row.username} className="score-row group outline outline-1 outline-[#c0c0c0]/10 transition duration-300 hover:bg-[#9AFF00]/10 hover:outline-[#9AFF00]/45 hover:shadow-[0_0_24px_rgba(154,255,0,.12)]">
+                  <td className="px-4 py-3 font-[family-name:var(--font-display)] text-[#F3C55B]">
+                    <span className="inline-flex items-center gap-2"><Code2 className="size-3.5" />#{row.rank}</span>
+                  </td>
+                  <td className="px-4 py-3 font-semibold text-white">{row.fullName}</td>
+                  <td className="px-4 py-3">
+                    <Link href={`/players/${row.username}`} className="font-[family-name:var(--font-display)] font-semibold uppercase text-zinc-200 transition group-hover:text-[#9AFF00]">
+                      {row.username}
+                    </Link>
+                  </td>
+                  <td className="px-4 py-3 text-zinc-300">{yearLabel(row.year ?? 1)}</td>
+                  <td className="px-4 py-3">{row.solved}</td>
+                  <td className="px-4 py-3">{row.solvedProblems.join(", ") || "None"}</td>
+                  <td className="px-4 py-3">{row.penalty}</td>
+                  <td className="px-4 py-3">{row.rawScore}</td>
+                  <td className="px-4 py-3">{row.contestScore}</td>
+                  <td className="px-4 py-3 text-[#F3C55B]">+{row.bonusPoints}</td>
+                  <td className="px-4 py-3 font-[family-name:var(--font-display)] text-lg font-bold text-[#9AFF00] drop-shadow-[0_0_10px_#9AFF00]">{row.finalScore}</td>
+                  <td className="px-4 py-3 text-[#8E2BFF]">{row.firstSolves}</td>
+                </tr>
+              ))}
+            </tbody>
+          ) : (
+            <tbody>
+              {props.rows.map((row) => (
+                <tr key={row.username} className="score-row group outline outline-1 outline-[#c0c0c0]/10 transition duration-300 hover:bg-[#9AFF00]/10 hover:outline-[#9AFF00]/45 hover:shadow-[0_0_24px_rgba(154,255,0,.12)]">
+                  <td className="px-4 py-3 font-[family-name:var(--font-display)] text-[#F3C55B]">
+                    <span className="inline-flex items-center gap-2"><Code2 className="size-3.5" />#{row.rank}</span>
+                  </td>
+                  <td className="px-4 py-3 font-semibold text-white">{row.fullName}</td>
+                  <td className="px-4 py-3">
+                    <Link href={`/players/${row.username}`} className="font-[family-name:var(--font-display)] font-semibold uppercase text-zinc-200 transition group-hover:text-[#9AFF00]">
+                      {row.username}
+                    </Link>
+                  </td>
+                  <td className="px-4 py-3 text-[#F3C55B]">{row.ratingTitle}</td>
+                  <td className="px-4 py-3 text-zinc-300">{row.rating}</td>
+                  <td className="px-4 py-3 font-[family-name:var(--font-display)] text-lg font-bold text-[#9AFF00] drop-shadow-[0_0_10px_#9AFF00]">{row.totalScore}</td>
+                  <td className="px-4 py-3">{row.contests}</td>
+                  <td className="px-4 py-3 text-[#F3C55B]">{row.wins}</td>
+                  <td className="px-4 py-3">{row.podiums}</td>
+                  <td className="px-4 py-3">{row.solved}</td>
+                  <td className="px-4 py-3 text-[#8E2BFF]">{row.firstSolves}</td>
+                  <td className="px-4 py-3">{row.averagePlacement}</td>
+                </tr>
+              ))}
+            </tbody>
+          )}
         </table>
       </div>
     </div>

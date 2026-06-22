@@ -77,6 +77,7 @@ model Player {
   role            PlayerRole             @default(MEMBER)
   currentRating   Int                    @default(1200)
   peakRating      Int                    @default(1200)
+  ratingTitle     String                 @default("Pupil")
   monthlyRank     Int?
   yearlyRank      Int?
   contestsPlayed  Int                    @default(0)
@@ -96,11 +97,13 @@ model Player {
   monthlyBoards   MonthlyLeaderboard[]
   yearlyBoards    YearlyLeaderboard[]
   ratingHistory   RatingHistory[]
+  titleHistory    RatingTitleHistory[]
   uploads         UploadAsset[]
   certificates    Certificate[]
   firstSolveRows  FirstSolve[]
 
   @@index([currentRating])
+  @@index([ratingTitle])
   @@index([year])
   @@index([monthlyRank])
   @@index([yearlyRank])
@@ -141,6 +144,7 @@ model Contest {
   certificates   Certificate[]
   coordinators   ContestCoordinator[]
   problems       ContestProblem[]
+  analytics      ContestAnalytics?
 
   @@index([visibility, startTime])
   @@index([startTime])
@@ -246,12 +250,17 @@ model ContestStanding {
 model Achievement {
   id             String   @id @default(cuid())
   playerUsername String
+  code           String?
+  category       String   @default("GENERAL")
   title          String
   description    String?
+  contestId      String?
   earnedAt       DateTime @default(now())
   player         Player   @relation(fields: [playerUsername], references: [username], onDelete: Cascade)
 
   @@index([playerUsername, earnedAt])
+  @@index([code])
+  @@unique([playerUsername, code])
 }
 
 model HallOfFame {
@@ -323,6 +332,40 @@ model RatingHistory {
 
   @@index([playerUsername, createdAt])
   @@index([contestId])
+}
+
+model RatingTitleHistory {
+  id             String   @id @default(cuid())
+  playerUsername String
+  title          String
+  rating         Int
+  contestId      String?
+  earnedAt       DateTime @default(now())
+  player         Player   @relation(fields: [playerUsername], references: [username], onDelete: Cascade)
+
+  @@index([playerUsername, earnedAt])
+  @@index([contestId])
+}
+
+model ContestAnalytics {
+  id             String   @id @default(cuid())
+  contestId      String   @unique
+  participants   Int      @default(0)
+  totalSolves    Int      @default(0)
+  averageScore   Float    @default(0)
+  averageSolved  Float    @default(0)
+  winnerUsername String?
+  fastestUsername String?
+  hardestProblemCode String?
+  mostSolvedProblemCode String?
+  unsolvedProblems String[] @default([])
+  problemStats   Json     @default("[]")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  contest        Contest  @relation(fields: [contestId], references: [id], onDelete: Cascade)
+
+  @@index([winnerUsername])
+  @@index([updatedAt])
 }
 
 model ActivityLog {

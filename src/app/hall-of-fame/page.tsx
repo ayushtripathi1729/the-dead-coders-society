@@ -4,13 +4,33 @@ import { ArenaBackground } from "@/components/arena-background";
 import { HallOfFameShowcase } from "@/components/hall-of-fame-showcase";
 import { Nav } from "@/components/nav";
 import { yearlyLeaderboard } from "@/lib/leaderboards";
+import { prisma } from "@/lib/prisma";
+import { formatDateUTC } from "@/lib/utils";
 
 export const revalidate = 120;
 
 export default async function HallOfFamePage() {
   const activeYear = new Date().getUTCFullYear();
-  const board = await yearlyLeaderboard(activeYear);
+  const [board, timeline] = await Promise.all([
+    yearlyLeaderboard(activeYear),
+    prisma.hallOfFame.findMany({
+      where: { contestId: { not: null } },
+      include: { player: true, contest: true },
+      orderBy: { awardedAt: "desc" },
+      take: 24,
+    }),
+  ]);
   const champions = board.rows.filter((row) => row.wins > 0 || row.rank <= 5);
+  const ratingRows = await prisma.ratingHistory.findMany({
+    where: { contestId: { in: timeline.map((entry) => entry.contestId).filter((id): id is string => Boolean(id)) } },
+    select: { contestId: true, playerUsername: true, rating: true },
+  });
+  const standingRows = await prisma.contestStanding.findMany({
+    where: { contestId: { in: timeline.map((entry) => entry.contestId).filter((id): id is string => Boolean(id)) } },
+    select: { contestId: true, playerUsername: true, solved: true },
+  });
+  const ratingsByWin = new Map(ratingRows.map((row) => [`${row.contestId}:${row.playerUsername}`, row.rating]));
+  const solvesByWin = new Map(standingRows.map((row) => [`${row.contestId}:${row.playerUsername}`, row.solved]));
 
   return (
     <>
@@ -53,6 +73,25 @@ export default async function HallOfFamePage() {
               <p className="mt-2 text-zinc-400">Finalize a contest to engrave the first champions.</p>
             </div>
           )}
+        </section>
+
+        <section className="section-band mt-8 p-5">
+          <div className="flex items-center gap-3">
+            <Trophy className="size-5 text-[#9AFF00]" />
+            <h2 className="section-rune font-[family-name:var(--font-display)] text-xl uppercase">Champion Timeline</h2>
+          </div>
+          <div className="mt-5 grid gap-3">
+            {timeline.length ? timeline.map((entry) => (
+              <Link key={entry.id} href={entry.contest ? `/contests/${entry.contest.slug}` : `/players/${entry.playerUsername}`} className="ledger-row">
+                <span className="font-[family-name:var(--font-display)] text-white">{entry.contest?.title ?? entry.title}</span>
+                <span className="text-[#9AFF00]">@{entry.playerUsername}</span>
+                <span>Rating {ratingsByWin.get(`${entry.contestId}:${entry.playerUsername}`) ?? entry.player.currentRating}</span>
+                <span>{solvesByWin.get(`${entry.contestId}:${entry.playerUsername}`) ?? 0} solved</span>
+                <span>{entry.score} pts</span>
+                <span className="ml-auto text-zinc-500">{formatDateUTC(entry.awardedAt)}</span>
+              </Link>
+            )) : <p className="text-sm text-zinc-500">No historical champion records yet.</p>}
+          </div>
         </section>
 
         <section className="section-band mt-8 p-5">

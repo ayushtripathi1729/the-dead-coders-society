@@ -6,7 +6,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { contestStatusAt } from "@/lib/contest-status";
 import { NON_ARCHIVED_CONTEST_WHERE, RANKED_CONTEST_WHERE } from "@/lib/contest-filters";
-import { bonusForRank, contestScore, finalChampionshipScore, rawScoreForSolveVector, societyRatingDelta } from "@/lib/scoring";
+import { bonusForRank, contestScore, finalChampionshipScore, ratingTitle, rawScoreForSolveVector, societyRatingDelta } from "@/lib/scoring";
 import { deleteFromCloudinary } from "@/server/uploads/cloudinary";
 
 const visibilitySchema = z.enum(["PUBLIC", "PRIVATE", "ARCHIVED"]);
@@ -103,6 +103,8 @@ function optionalString(value?: string | null) {
 
 function revalidatePublicPages(extraPaths: string[] = []) {
   revalidateTag("public-leaderboards");
+  revalidateTag("public-contests");
+  revalidateTag("public-players");
   for (const path of [...publicRevalidationPaths, ...extraPaths]) {
     revalidatePath(path);
   }
@@ -725,7 +727,10 @@ export async function refreshAllDerived(db: DbClient = prisma) {
   }
   for (const year of years) await rebuildYearlyLeaderboard(year, db);
   await db.hallOfFame.deleteMany({ where: { contestId: { not: null } } });
-  for (const contest of contests) await rebuildHallOfFame(contest.id, db);
+  for (const contest of contests) {
+    await rebuildContestAnalytics(contest.id, db);
+    await rebuildHallOfFame(contest.id, db);
+  }
   await rebuildAchievements(db);
 }
 
@@ -837,10 +842,12 @@ async function recomputeRatings(db: DbClient = prisma) {
   });
 
   await db.ratingHistory.deleteMany();
+  await db.ratingTitleHistory.deleteMany();
   await db.contestParticipation.updateMany({ data: { ratingDelta: 0 } });
 
   // Batch create rating history and collect updates
   const ratingHistoryRecords: Prisma.RatingHistoryCreateManyInput[] = [];
+  const titleHistoryRecords: Prisma.RatingTitleHistoryCreateManyInput[] = [];
   const participationDeltaUpdates: Array<{ contestId: string; playerUsername: string; delta: number }> = [];
 
   for (const contest of contests) {
@@ -850,6 +857,8 @@ async function recomputeRatings(db: DbClient = prisma) {
       const current = ratings.get(standing.playerUsername) ?? 1200;
       const delta = societyRatingDelta({ rank: standing.rank, solved: standing.solved, participantCount, finalScore: standing.finalScore, firstSolves: standing.firstSolves });
       const next = Math.max(100, current + delta);
+      const previousTitle = ratingTitle(current);
+      const nextTitle = ratingTitle(next);
       ratings.set(standing.playerUsername, next);
       peaks.set(standing.playerUsername, Math.max(peaks.get(standing.playerUsername) ?? 1200, next));
       ratingHistoryRecords.push({
@@ -859,6 +868,14 @@ async function recomputeRatings(db: DbClient = prisma) {
         delta,
         reason: "TDCS standings finalization",
       });
+      if (previousTitle !== nextTitle || !titleHistoryRecords.some((row) => row.playerUsername === standing.playerUsername)) {
+        titleHistoryRecords.push({
+          playerUsername: standing.playerUsername,
+          contestId: contest.id,
+          title: nextTitle,
+          rating: next,
+        });
+      }
       participationDeltaUpdates.push({ contestId: contest.id, playerUsername: standing.playerUsername, delta });
     }
   }
@@ -866,6 +883,9 @@ async function recomputeRatings(db: DbClient = prisma) {
   // Batch create rating history
   if (ratingHistoryRecords.length) {
     await db.ratingHistory.createMany({ data: ratingHistoryRecords });
+  }
+  if (titleHistoryRecords.length) {
+    await db.ratingTitleHistory.createMany({ data: titleHistoryRecords });
   }
 
   // Batch update participation deltas
@@ -880,7 +900,7 @@ async function recomputeRatings(db: DbClient = prisma) {
     memberPlayers.map((player) =>
       db.player.update({
         where: { username: player.username },
-        data: { currentRating: ratings.get(player.username) ?? 1200, peakRating: peaks.get(player.username) ?? 1200 },
+        data: { currentRating: ratings.get(player.username) ?? 1200, peakRating: peaks.get(player.username) ?? 1200, ratingTitle: ratingTitle(ratings.get(player.username) ?? 1200) },
       })
     )
   );
@@ -1026,7 +1046,7 @@ async function rebuildHallOfFame(contestId: string, db: DbClient = prisma) {
         contest: { connect: { id: contestId } },
         title: `${isWinner ? "Champion" : `Rank #${standing.rank}`} of ${standing.contest.title}`,
         score: standing.finalScore,
-        badges: JSON.stringify([isWinner ? "Champion" : "Top 5", `Rank #${standing.rank}`]),
+        badges: JSON.stringify([isWinner ? "Champion" : "Top 5", `Rank #${standing.rank}`, ratingTitle(standing.player.currentRating)]),
         specialTitles: JSON.stringify([isWinner ? "Society Laureate" : "Society Finalist"]),
       },
     });
@@ -1034,19 +1054,93 @@ async function rebuildHallOfFame(contestId: string, db: DbClient = prisma) {
 }
 
 async function rebuildAchievements(db: DbClient = prisma) {
-  await db.achievement.deleteMany();
-  const players = await db.player.findMany({ include: { standings: true } });
+  const players = await db.player.findMany({ include: { standings: { include: { contest: true }, orderBy: { contest: { startTime: "asc" } } } } });
   for (const player of players) {
-    const titles = new Set<string>();
-    if (player.wins > 0) titles.add("Contest Dominator");
-    if (player.firstSolves >= 3) titles.add("First Blood Hunter");
-    if (player.totalSolved >= 10) titles.add("Problem Slayer");
-    if (player.monthlyRank === 1) titles.add("Monthly Champion");
-    if (player.yearlyRank === 1) titles.add("Yearly Champion");
-    for (const title of titles) {
-      await db.achievement.create({ data: { player: { connect: { username: player.username } }, title } });
+    const finalized = player.standings.filter((standing) => standing.contest.standingsFinalizedAt && standing.contest.visibility !== "PRIVATE");
+    const ranked = player.role === "ADMIN" ? [] : finalized;
+    const sortedMonths = [...new Set(finalized.map((standing) => `${standing.contest.startTime.getUTCFullYear()}-${standing.contest.startTime.getUTCMonth()}`))];
+    const awards: Array<{ code: string; title: string; description: string; category?: string; contestId?: string }> = [];
+    if (finalized.length >= 1) awards.push({ code: "FIRST_CONTEST", title: "First Contest", description: "Completed a first official TDS contest." });
+    if (player.firstSolves >= 1) awards.push({ code: "FIRST_SOLVE", title: "First Solve", description: "Recorded a first solve." });
+    if (player.wins >= 1) awards.push({ code: "CONTEST_WINNER", title: "Contest Winner", description: "Won an official contest.", category: "PLACEMENT" });
+    if (player.podiums >= 1) awards.push({ code: "TOP_3_FINISH", title: "Top 3 Finish", description: "Reached the podium.", category: "PLACEMENT" });
+    if (ranked.some((standing) => standing.rank <= 10)) awards.push({ code: "TOP_10_FINISH", title: "Top 10 Finish", description: "Placed in the top ten.", category: "PLACEMENT" });
+    if (finalized.length >= 3 || sortedMonths.length >= 3) awards.push({ code: "THREE_CONTEST_STREAK", title: "3 Contest Streak", description: "Built a three-contest record.", category: "STREAK" });
+    if (finalized.length >= 5 || sortedMonths.length >= 5) awards.push({ code: "FIVE_CONTEST_STREAK", title: "5 Contest Streak", description: "Built a five-contest record.", category: "STREAK" });
+    if (player.totalScore >= 1000) awards.push({ code: "POINTS_1000", title: "1000 Points Club", description: "Crossed 1000 championship points.", category: "POINTS" });
+    if (player.totalScore >= 5000) awards.push({ code: "POINTS_5000", title: "5000 Points Club", description: "Crossed 5000 championship points.", category: "POINTS" });
+    if (player.totalSolved >= 10) awards.push({ code: "PROBLEM_SLAYER", title: "Problem Slayer", description: "Solved at least ten problems.", category: "SOLVES" });
+    if (player.firstSolves >= 3) awards.push({ code: "FIRST_BLOOD_COLLECTOR", title: "First Blood Collector", description: "Collected at least three first solves.", category: "SOLVES" });
+    if (player.monthlyRank === 1) awards.push({ code: "MONTHLY_CHAMPION", title: "Monthly Champion", description: "Held the top monthly rank.", category: "RANK" });
+    if (player.yearlyRank === 1) awards.push({ code: "YEARLY_CHAMPION", title: "Yearly Champion", description: "Held the top yearly rank.", category: "RANK" });
+    for (const award of awards) {
+      await db.achievement.upsert({
+        where: { playerUsername_code: { playerUsername: player.username, code: award.code } },
+        update: { title: award.title, description: award.description, category: award.category ?? "GENERAL", contestId: award.contestId },
+        create: { playerUsername: player.username, code: award.code, title: award.title, description: award.description, category: award.category ?? "GENERAL", contestId: award.contestId },
+      });
     }
   }
+}
+
+async function rebuildContestAnalytics(contestId: string, db: DbClient = prisma) {
+  const contest = await db.contest.findUnique({
+    where: { id: contestId },
+    include: {
+      problems: { orderBy: [{ sortOrder: "asc" }, { code: "asc" }], include: { firstSolves: { include: { player: true } } } },
+      standings: { include: { player: true }, orderBy: [{ rank: "asc" }, { penalty: "asc" }] },
+    },
+  });
+  if (!contest) return;
+  const participants = contest.standings.filter((standing) => standing.player.role === "MEMBER");
+  const participantCount = participants.length;
+  const totalSolves = participants.reduce((sum, standing) => sum + standing.solved, 0);
+  const averageScore = participantCount ? Number((participants.reduce((sum, standing) => sum + standing.finalScore, 0) / participantCount).toFixed(1)) : 0;
+  const averageSolved = participantCount ? Number((totalSolves / participantCount).toFixed(1)) : 0;
+  const problemStats = contest.problems.map((problem, index) => {
+    const solveCount = participants.reduce((sum, standing) => sum + (standing.solveVector[index] === 1 ? 1 : 0), 0);
+    const firstSolve = problem.firstSolves[0];
+    return {
+      code: problem.code,
+      title: problem.title,
+      points: problem.points,
+      solves: solveCount,
+      solveRate: participantCount ? Number(((solveCount / participantCount) * 100).toFixed(1)) : 0,
+      firstSolver: firstSolve?.status === "ASSIGNED" && firstSolve.player ? firstSolve.player.username : null,
+      unsolved: solveCount === 0,
+    };
+  });
+  const hardest = [...problemStats].sort((a, b) => a.solves - b.solves || b.points - a.points)[0];
+  const mostSolved = [...problemStats].sort((a, b) => b.solves - a.solves || a.points - b.points)[0];
+  const fastest = [...participants].filter((standing) => standing.solved > 0).sort((a, b) => a.penalty - b.penalty || b.solved - a.solved)[0];
+  await db.contestAnalytics.upsert({
+    where: { contestId },
+    update: {
+      participants: participantCount,
+      totalSolves,
+      averageScore,
+      averageSolved,
+      winnerUsername: participants[0]?.playerUsername,
+      fastestUsername: fastest?.playerUsername,
+      hardestProblemCode: hardest?.code,
+      mostSolvedProblemCode: mostSolved?.code,
+      unsolvedProblems: problemStats.filter((problem) => problem.unsolved).map((problem) => problem.code),
+      problemStats,
+    },
+    create: {
+      contestId,
+      participants: participantCount,
+      totalSolves,
+      averageScore,
+      averageSolved,
+      winnerUsername: participants[0]?.playerUsername,
+      fastestUsername: fastest?.playerUsername,
+      hardestProblemCode: hardest?.code,
+      mostSolvedProblemCode: mostSolved?.code,
+      unsolvedProblems: problemStats.filter((problem) => problem.unsolved).map((problem) => problem.code),
+      problemStats,
+    },
+  });
 }
 
 export function parseStandingsText(text: string): EntryInput[] {
