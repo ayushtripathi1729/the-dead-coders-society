@@ -1,4 +1,5 @@
 import { notFound } from "next/navigation";
+import Image from "next/image";
 import { Calendar, Gauge, Mail, Phone, Trophy, Users } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { ArenaBackground } from "@/components/arena-background";
@@ -9,7 +10,7 @@ import { getContest } from "@/lib/leaderboards";
 import type { ContestView } from "@/lib/types";
 import { formatDateUTC } from "@/lib/utils";
 
-export const dynamic = "force-dynamic";
+export const revalidate = 60;
 
 type ContestStat = { Icon: LucideIcon; label: string; value: string };
 type ContestProblemView = ContestView["problems"][number];
@@ -37,7 +38,16 @@ export default async function ContestPage({ params }: { params: Promise<{ id: st
           <span className="corner corner-bl" />
           <span className="corner corner-br" />
           <div className="grid lg:grid-cols-[.95fr_1.05fr]">
-            <div className="relative min-h-96 bg-cover bg-center" style={{ backgroundImage: `linear-gradient(90deg,rgba(0,0,0,.08),rgba(0,0,0,.84)),url(${JSON.stringify(bannerPoster)})` }}>
+            <div className="relative min-h-96 overflow-hidden">
+              <Image
+                src={bannerPoster}
+                alt={`${contest.title} banner`}
+                fill
+                priority
+                sizes="(min-width: 1024px) 48vw, 100vw"
+                className="object-cover"
+              />
+              <div className="absolute inset-0 bg-[linear-gradient(90deg,rgba(0,0,0,.08),rgba(0,0,0,.84))]" />
               <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,transparent,rgba(142,43,255,.3)_62%,rgba(0,0,0,.85))]" />
               <div className="absolute bottom-0 left-0 right-0 h-px bg-[#9AFF00] shadow-[0_0_24px_#9AFF00]" />
             </div>

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { requireAdmin } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
@@ -11,6 +12,7 @@ const uploadSchema = z.object({
 });
 
 const allowedImageTypes = new Set(["image/jpeg", "image/png", "image/webp"]);
+const publicUploadPaths = ["/", "/contests", "/contests/upcoming", "/contests/live", "/contests/archive"];
 
 function isString(value: string | null): value is string {
   return typeof value === "string";
@@ -31,6 +33,10 @@ function friendlyUploadError(error: unknown) {
     return error.message;
   }
   return "Upload failed. Please try again.";
+}
+
+function revalidateUploadSurfaces() {
+  for (const path of publicUploadPaths) revalidatePath(path);
 }
 
 async function resolveUploadReferences(parsed: z.infer<typeof uploadSchema>) {
@@ -149,6 +155,7 @@ export async function POST(request: NextRequest) {
     }
 
     await Promise.all(replacedPublicIds.map((publicId) => deleteFromCloudinary(publicId).catch(() => undefined)));
+    if (parsed.contestId) revalidateUploadSurfaces();
 
     return NextResponse.json({ ok: true, upload: record, url: uploaded.url });
   } catch (error) {
@@ -199,6 +206,7 @@ export async function PATCH(request: NextRequest) {
       return assets.map((asset) => asset.publicId).filter(isString);
     });
     await Promise.all(publicIds.map((publicId) => deleteFromCloudinary(publicId).catch(() => undefined)));
+    revalidateUploadSurfaces();
 
     return NextResponse.json({ ok: true });
   } catch (error) {

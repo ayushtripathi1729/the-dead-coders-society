@@ -3,7 +3,7 @@
 import Image from "next/image";
 import type { ChangeEvent, DragEvent, FormEvent, ReactNode } from "react";
 import { useEffect, useMemo, useState, useTransition } from "react";
-import { Activity, Copy, Crown, Database, FilePenLine, ImagePlus, ListChecks, Plus, RadioTower, Save, Trash2, Upload, UserRound, Users, X, Zap } from "lucide-react";
+import { Activity, Copy, Crown, Database, FilePenLine, ImagePlus, ListChecks, Loader2, Plus, RadioTower, Save, Trash2, Upload, UserRound, Users, X, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { ContestEntryView, ContestView } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -61,10 +61,20 @@ function problemDrafts(contest?: ContestView): ProblemDraft[] {
     : defaultProblems();
 }
 
+function operationLabel(method: string, endpoint: string) {
+  if (method === "DELETE") return "Deleting";
+  if (endpoint.includes("/entries")) return "Saving standings";
+  if (endpoint.includes("/players")) return "Saving player";
+  if (endpoint.includes("/sync")) return "Syncing";
+  if (method === "PATCH") return "Saving changes";
+  return "Saving";
+}
+
 export function AdminWorkbench({ contests, activityLogs, players }: { contests: ContestView[]; activityLogs: ActivityLogView[]; players: PlayerAdminView[] }) {
   const [contestList, setContestList] = useState(contests);
   const [playerList, setPlayerList] = useState(players);
   const [message, setMessage] = useState("");
+  const [operation, setOperation] = useState("");
   const [selectedContest, setSelectedContest] = useState(contests[0]?.id ?? "");
   const [selectedPlayer, setSelectedPlayer] = useState(players[0]?.username ?? "");
   const [isEditingContest, setIsEditingContest] = useState(false);
@@ -74,6 +84,9 @@ export function AdminWorkbench({ contests, activityLogs, players }: { contests: 
   const activeContest = useMemo(() => contestList.find((contest) => contest.id === selectedContest), [contestList, selectedContest]);
 
   const submitJson: SubmitJson = async <TResponse,>(endpoint: string, body: Record<string, unknown>, method = "POST"): Promise<TResponse> => {
+    const label = operationLabel(method, endpoint);
+    setOperation(label);
+    setMessage(`${label}...`);
     const response = await fetch(endpoint, {
       method,
       headers: { "Content-Type": "application/json" },
@@ -206,7 +219,12 @@ export function AdminWorkbench({ contests, activityLogs, players }: { contests: 
 
   return (
     <div className="admin-shell grid min-w-0 gap-5">
-      {message && <div className="empty-plaque clip-arena min-w-0 overflow-hidden break-words p-4 font-[family-name:var(--font-mono)] text-[#9AFF00]">{message}</div>}
+      {message && (
+        <div role="status" aria-live="polite" className="empty-plaque clip-arena sticky top-2 z-30 flex min-w-0 items-center gap-3 overflow-hidden break-words p-4 font-[family-name:var(--font-mono)] text-[#9AFF00]">
+          {isPending && operation ? <Loader2 className="size-4 shrink-0 animate-spin" /> : null}
+          <span className="min-w-0">{message}</span>
+        </div>
+      )}
       <div className="control-room-shell">
         <aside className="control-room-sidebar section-band p-4">
           <div className="mb-5 min-w-0">
@@ -485,6 +503,7 @@ function CloudinaryUploader({ name, title, kind, ratio, contestId, initialUrl, d
     const request = new XMLHttpRequest();
     setUploading(true);
     setProgress(4);
+    onMessage(`Uploading ${title}...`);
     request.upload.onprogress = (event) => event.lengthComputable && setProgress(Math.round((event.loaded / event.total) * 100));
     request.onload = () => {
       setUploading(false);
@@ -531,6 +550,7 @@ function CloudinaryUploader({ name, title, kind, ratio, contestId, initialUrl, d
       return;
     }
     try {
+      onMessage(`Removing ${title}...`);
       const response = await fetch("/api/admin/uploads", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },

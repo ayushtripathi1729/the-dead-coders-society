@@ -6,7 +6,7 @@ import { Nav } from "@/components/nav";
 import { yearLabel } from "@/lib/labels";
 import { prisma } from "@/lib/prisma";
 
-export const dynamic = "force-dynamic";
+export const revalidate = 60;
 
 export default async function PlayersPage() {
   const players = await prisma.player.findMany({

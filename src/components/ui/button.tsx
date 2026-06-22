@@ -13,7 +13,7 @@ export function Button({ className, asChild, variant = "primary", ...props }: Bu
   return (
     <Comp
       className={cn(
-        "electric-border clip-arena inline-flex h-11 max-w-full min-w-0 shrink items-center justify-center gap-2 overflow-hidden text-ellipsis whitespace-nowrap px-4 font-[family-name:var(--font-display)] text-[11px] uppercase tracking-[0.16em] transition duration-300 disabled:cursor-not-allowed disabled:opacity-50 [&_svg]:shrink-0",
+        "electric-border clip-arena inline-flex min-h-11 max-w-full min-w-0 shrink items-center justify-center gap-2 overflow-hidden px-4 py-2 text-center font-[family-name:var(--font-display)] text-[11px] uppercase leading-tight tracking-[0.16em] transition duration-300 disabled:cursor-not-allowed disabled:opacity-50 [&_svg]:shrink-0",
         "before:absolute before:inset-0 before:-z-10 before:bg-[linear-gradient(110deg,rgba(255,255,255,.18),transparent_32%,rgba(255,255,255,.07))] before:opacity-50",
         variant === "primary" && "relative border border-[#9AFF00]/70 bg-black text-[#9AFF00] toxic-glow hover:bg-[#9AFF00] hover:text-black",
         variant === "ghost" && "relative border border-[#8E2BFF]/70 bg-black/70 text-zinc-100 purple-glow hover:border-[#9AFF00]/80 hover:text-[#9AFF00]",

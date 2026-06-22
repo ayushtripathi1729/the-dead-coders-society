@@ -104,6 +104,8 @@ model Player {
   @@index([year])
   @@index([monthlyRank])
   @@index([yearlyRank])
+  @@index([createdAt])
+  @@index([updatedAt])
 }
 
 model Contest {
@@ -141,6 +143,8 @@ model Contest {
   problems       ContestProblem[]
 
   @@index([visibility, startTime])
+  @@index([startTime])
+  @@index([updatedAt])
   @@index([createdById])
 }
 
@@ -171,6 +175,7 @@ model FirstSolve {
 
   @@unique([problemId])
   @@index([playerUsername, createdAt])
+  @@index([status, createdAt])
 }
 
 model ContestCoordinator {
@@ -234,6 +239,8 @@ model ContestStanding {
   @@index([rank])
   @@index([contestId, rank])
   @@index([playerUsername, finalScore])
+  @@index([createdAt])
+  @@index([updatedAt])
 }
 
 model Achievement {
@@ -261,6 +268,7 @@ model HallOfFame {
 
   @@index([awardedAt])
   @@index([playerUsername])
+  @@index([contestId, awardedAt])
 }
 
 model MonthlyLeaderboard {
@@ -330,6 +338,7 @@ model ActivityLog {
 
   @@index([adminId, createdAt])
   @@index([entity, entityId])
+  @@index([createdAt])
 }
 
 model UploadAsset {

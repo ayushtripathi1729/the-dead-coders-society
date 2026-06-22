@@ -4,7 +4,7 @@ import { ArenaBackground } from "@/components/arena-background";
 import { Nav } from "@/components/nav";
 import { listContests } from "@/lib/leaderboards";
 
-export const dynamic = "force-dynamic";
+export const revalidate = 60;
 
 export default async function ContestArchivePage() {
   const contests = await listContests();

@@ -8,7 +8,7 @@ import { yearLabel } from "@/lib/labels";
 import { getPlayer, type PlayerProfile } from "@/lib/leaderboards";
 import { formatDateUTC } from "@/lib/utils";
 
-export const dynamic = "force-dynamic";
+export const revalidate = 60;
 
 type ChartPoint = { contest: string; score: number };
 type PlayerHistoryItem = PlayerProfile["history"][number];

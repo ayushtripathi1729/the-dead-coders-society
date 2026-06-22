@@ -13,7 +13,7 @@ import { listContests, monthlyLeaderboard, yearlyLeaderboard } from "@/lib/leade
 import type { ContestEntryView, ContestView } from "@/lib/types";
 import { formatDateUTC } from "@/lib/utils";
 
-export const dynamic = "force-dynamic";
+export const revalidate = 60;
 
 type HomeWinner = { contest: ContestView; winner: ContestEntryView };
 

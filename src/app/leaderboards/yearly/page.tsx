@@ -6,7 +6,7 @@ import { Nav } from "@/components/nav";
 import { Podium } from "@/components/podium";
 import { yearlyLeaderboard } from "@/lib/leaderboards";
 
-export const dynamic = "force-dynamic";
+export const revalidate = 60;
 
 type YearlyStat = { Icon: LucideIcon; label: string; name?: string; value?: number };
 

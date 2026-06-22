@@ -1,7 +1,7 @@
 import { ContestStatusPage } from "@/components/contest-status-page";
 import { listContests } from "@/lib/leaderboards";
 
-export const dynamic = "force-dynamic";
+export const revalidate = 30;
 
 export default async function LiveContestsPage() {
   const contests = (await listContests()).filter((contest) => contest.status === "LIVE");

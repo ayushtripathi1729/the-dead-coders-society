@@ -5,7 +5,7 @@ import { HallOfFameShowcase } from "@/components/hall-of-fame-showcase";
 import { Nav } from "@/components/nav";
 import { yearlyLeaderboard } from "@/lib/leaderboards";
 
-export const dynamic = "force-dynamic";
+export const revalidate = 120;
 
 export default async function HallOfFamePage() {
   const activeYear = new Date().getUTCFullYear();

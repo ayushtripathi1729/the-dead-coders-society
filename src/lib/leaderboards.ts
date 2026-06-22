@@ -1,7 +1,7 @@
 import "server-only";
 
-import type { Achievement, Contest, ContestCoordinator, ContestParticipation, ContestProblem, ContestStanding, FirstSolve, Player, RatingHistory } from "@prisma/client";
-import { syncCompletedContests } from "@/lib/admin-actions";
+import type { Achievement, Contest, ContestCoordinator, ContestParticipation, ContestProblem, ContestStanding, FirstSolve, Player, Prisma, RatingHistory } from "@prisma/client";
+import { unstable_cache } from "next/cache";
 import { contestStatusAt } from "@/lib/contest-status";
 import { PUBLIC_CONTEST_WHERE, RANKED_CONTEST_WHERE } from "@/lib/contest-filters";
 import { prisma } from "@/lib/prisma";
@@ -13,6 +13,7 @@ type ContestWithEntries = Contest & {
   coordinators: ContestCoordinator[];
   problems: (ContestProblem & { firstSolves: (FirstSolve & { player: Player | null })[] })[];
 };
+type ContestCardWithWinner = Prisma.ContestGetPayload<{ include: typeof contestCardInclude }>;
 type PlayerStandingWithContest = ContestStanding & { contest: Contest };
 type PlayerParticipationWithContest = ContestParticipation & { contest: Contest };
 
@@ -137,8 +138,62 @@ const contestInclude = {
   problems: { include: { firstSolves: { include: { player: true } } } },
 };
 
+const contestCardInclude = {
+  standings: {
+    take: 1,
+    orderBy: { rank: "asc" as const },
+    include: { player: true },
+  },
+};
+
+function toContestCardView(contest: ContestCardWithWinner): ContestView {
+  return {
+    id: contest.id,
+    slug: contest.slug,
+    title: contest.title,
+    description: contest.description,
+    invitePoster: contest.invitePoster,
+    bannerPoster: contest.bannerPoster,
+    contestBanner: contest.contestBanner,
+    platform: contest.platform,
+    contestLink: contest.contestLink,
+    startTime: contest.startTime.toISOString(),
+    duration: contest.duration,
+    status: contestStatusAt(contest.startTime, contest.duration, contest.statusOverride),
+    statusOverride: contest.statusOverride,
+    updatedAt: contest.updatedAt.toISOString(),
+    visibility: contest.visibility,
+    scoringSystem: contest.scoringSystem,
+    prizePool: contest.prizePool,
+    standingsFinalizedAt: contest.standingsFinalizedAt?.toISOString() ?? null,
+    lastSyncedAt: contest.lastSyncedAt?.toISOString() ?? null,
+    syncStatus: contest.syncStatus,
+    syncMessage: contest.syncMessage,
+    totalPoints: contest.totalPoints,
+    coordinators: [],
+    firstSolveRows: [],
+    problems: [],
+    entries: contest.standings.map((entry) => ({
+      id: entry.id,
+      username: entry.player.username,
+      fullName: entry.player.fullName,
+      year: entry.player.year,
+      role: entry.player.role,
+      rank: entry.rank,
+      solved: entry.solved,
+      solveVector: entry.solveVector,
+      solvedProblems: entry.solvedProblems,
+      penalty: entry.penalty,
+      rawScore: entry.rawScore,
+      contestScore: entry.contestScore,
+      bonusPoints: entry.bonusPoints,
+      finalScore: entry.finalScore,
+      firstSolves: entry.firstSolves,
+    })),
+  };
+}
+
 export async function listContests({ includeHidden = false }: { includeHidden?: boolean } = {}): Promise<ContestView[]> {
-  await syncCompletedContests(undefined, { force: false });
   const contests = await prisma.contest.findMany({
     where: includeHidden ? undefined : PUBLIC_CONTEST_WHERE,
     include: contestInclude,
@@ -148,7 +203,6 @@ export async function listContests({ includeHidden = false }: { includeHidden?: 
 }
 
 export async function getContest(idOrSlug: string): Promise<ContestView | null> {
-  await syncCompletedContests(undefined, { force: false });
   const contest = await prisma.contest.findFirst({
     where: { OR: [{ id: idOrSlug }, { slug: idOrSlug }] },
     include: contestInclude,
@@ -197,28 +251,81 @@ function aggregate(entries: EntryWithPlayer[]): LeaderboardRow[] {
     }));
 }
 
-export async function monthlyLeaderboard(year: number, month: number): Promise<{ contests: ContestView[]; rows: LeaderboardRow[] }> {
-  await syncCompletedContests(undefined, { force: false });
+const cachedMonthlyLeaderboard = unstable_cache(async (year: number, month: number): Promise<{ contests: ContestView[]; rows: LeaderboardRow[] }> => {
   const start = new Date(Date.UTC(year, month - 1, 1));
   const end = new Date(Date.UTC(year, month, 1));
-  const contests = await prisma.contest.findMany({
-    where: { startTime: { gte: start, lt: end }, ...RANKED_CONTEST_WHERE },
-    include: contestInclude,
-    orderBy: { startTime: "asc" },
-  });
-  return { contests: contests.map(toContestView), rows: aggregate(contests.flatMap((contest) => contest.standings)) };
+  const [contests, boardRows] = await Promise.all([
+    prisma.contest.findMany({
+      where: { startTime: { gte: start, lt: end }, ...RANKED_CONTEST_WHERE },
+      include: contestCardInclude,
+      orderBy: { startTime: "asc" },
+    }),
+    prisma.monthlyLeaderboard.findMany({
+      where: { year, month },
+      orderBy: { rank: "asc" },
+      include: { player: { select: { fullName: true, username: true, year: true, currentRating: true, bestRank: true } } },
+    }),
+  ]);
+  return {
+    contests: contests.map(toContestCardView),
+    rows: boardRows.length ? boardRows.map((row) => ({
+      username: row.player.username,
+      fullName: row.player.fullName,
+      year: row.player.year,
+      rank: row.rank,
+      totalScore: row.totalScore,
+      contests: row.contests,
+      wins: row.wins,
+      podiums: 0,
+      solved: row.solved,
+      penalty: 0,
+      firstSolves: row.firstSolves,
+      rating: row.player.currentRating,
+      averagePlacement: row.averageRank ?? 0,
+      bestPlacement: row.player.bestRank ?? 0,
+    })) : aggregate(contests.flatMap((contest) => contest.standings)),
+  };
+}, ["monthly-leaderboard"], { revalidate: 60, tags: ["public-leaderboards"] });
+
+export async function monthlyLeaderboard(year: number, month: number): Promise<{ contests: ContestView[]; rows: LeaderboardRow[] }> {
+  return cachedMonthlyLeaderboard(year, month);
 }
 
-export async function yearlyLeaderboard(year: number): Promise<{ contests: ContestView[]; rows: LeaderboardRow[] }> {
-  await syncCompletedContests(undefined, { force: false });
+const cachedYearlyLeaderboard = unstable_cache(async (year: number): Promise<{ contests: ContestView[]; rows: LeaderboardRow[] }> => {
   const start = new Date(Date.UTC(year, 0, 1));
   const end = new Date(Date.UTC(year + 1, 0, 1));
-  const contests = await prisma.contest.findMany({
-    where: { startTime: { gte: start, lt: end }, ...RANKED_CONTEST_WHERE },
-    include: contestInclude,
-    orderBy: { startTime: "asc" },
-  });
-  return { contests: contests.map(toContestView), rows: aggregate(contests.flatMap((contest) => contest.standings)) };
+  const boardRows = await prisma.yearlyLeaderboard.findMany({
+      where: { year },
+      orderBy: { rank: "asc" },
+      include: { player: { select: { fullName: true, username: true, year: true, currentRating: true, bestRank: true } } },
+    });
+  return {
+    contests: [],
+    rows: boardRows.length ? boardRows.map((row) => ({
+      username: row.player.username,
+      fullName: row.player.fullName,
+      year: row.player.year,
+      rank: row.rank,
+      totalScore: row.totalScore,
+      contests: row.contests,
+      wins: row.wins,
+      podiums: 0,
+      solved: row.solved,
+      penalty: 0,
+      firstSolves: row.firstSolves,
+      rating: row.player.currentRating,
+      averagePlacement: row.averageRank ?? 0,
+      bestPlacement: row.player.bestRank ?? 0,
+    })) : aggregate((await prisma.contest.findMany({
+      where: { startTime: { gte: start, lt: end }, ...RANKED_CONTEST_WHERE },
+      include: { standings: { include: { player: true } } },
+      orderBy: { startTime: "asc" },
+    })).flatMap((contest) => contest.standings)),
+  };
+}, ["yearly-leaderboard"], { revalidate: 60, tags: ["public-leaderboards"] });
+
+export async function yearlyLeaderboard(year: number): Promise<{ contests: ContestView[]; rows: LeaderboardRow[] }> {
+  return cachedYearlyLeaderboard(year);
 }
 
 export async function getPlayer(username: string): Promise<PlayerProfile | null> {

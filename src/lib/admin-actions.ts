@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { Prisma } from "@prisma/client";
+import { revalidatePath, revalidateTag } from "next/cache";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { contestStatusAt } from "@/lib/contest-status";
@@ -13,6 +14,17 @@ const statusOverrideSchema = z.enum(["AUTO", "FORCE_UPCOMING", "FORCE_LIVE", "FO
 const playerRoleSchema = z.enum(["MEMBER", "ADMIN"]);
 type DbClient = Prisma.TransactionClient | typeof prisma;
 const httpUrlSchema = z.string().url().refine((value) => /^https?:\/\//i.test(value), "Only HTTP(S) URLs are allowed.");
+const publicRevalidationPaths = [
+  "/",
+  "/contests",
+  "/contests/upcoming",
+  "/contests/live",
+  "/contests/archive",
+  "/players",
+  "/hall-of-fame",
+  "/leaderboards/monthly",
+  "/leaderboards/yearly",
+];
 
 const coordinatorSchema = z.object({
   name: z.string().min(1).max(120),
@@ -87,6 +99,13 @@ export type EntryInput = z.infer<typeof entryInputSchema>;
 
 function optionalString(value?: string | null) {
   return value ? value : null;
+}
+
+function revalidatePublicPages(extraPaths: string[] = []) {
+  revalidateTag("public-leaderboards");
+  for (const path of [...publicRevalidationPaths, ...extraPaths]) {
+    revalidatePath(path);
+  }
 }
 
 export function slugify(input: string) {
@@ -239,6 +258,7 @@ export async function createOrUpdateContest(input: unknown, id?: string, adminId
   });
 
   if (id || problems) await refreshAllDerived();
+  revalidatePublicPages([`/contests/${contest.slug}`]);
   await logActivity(adminId, id ? "contest.edited" : "contest.created", "Contest", contest.id, { title: contest.title });
   return contest;
 }
@@ -247,6 +267,7 @@ export async function deleteContest(id: string, adminId?: string) {
   const assets = await prisma.uploadAsset.findMany({ where: { contestId: id }, select: { publicId: true } });
   const contest = await prisma.contest.delete({ where: { id } });
   await refreshAllDerived();
+  revalidatePublicPages([`/contests/${contest.slug}`]);
   await logActivity(adminId, "contest.deleted", "Contest", id, { title: contest.title });
   await Promise.all(assets.map((asset) => deleteFromCloudinary(asset.publicId).catch(() => undefined)));
   return contest;
@@ -285,6 +306,7 @@ export async function upsertContestEntries(contestId: string, rawEntries: unknow
   }, { maxWait: 10_000, timeout: 120_000 });
 
   await refreshAllDerived();
+  revalidatePublicPages();
   await logActivity(adminId, "standings.updated", "ContestStanding", contestId, { rows: saved.length, source: entries.length === 1 ? "single-row" : "draft" });
   return saved;
 }
@@ -299,6 +321,7 @@ export async function updateContestEntry(contestId: string, standingId: string, 
     await replaceContestStandings(contestId, next, tx);
   }, { maxWait: 10_000, timeout: 120_000 });
   await refreshAllDerived();
+  revalidatePublicPages();
   await logActivity(adminId, "standings.updated", "ContestStanding", standingId, { contestId, source: "row-edit" });
 }
 
@@ -313,6 +336,7 @@ export async function deleteContestEntry(contestId: string, standingId: string, 
     await replaceContestStandings(contestId, rows.map((row) => ({ username: row.player.username, fullName: row.player.fullName, solveVector: row.solveVector, penalty: row.penalty, notes: row.notes })), tx);
   }, { maxWait: 10_000, timeout: 120_000 });
   await refreshAllDerived();
+  revalidatePublicPages();
   await logActivity(adminId, "standings.updated", "ContestStanding", standingId, { contestId, source: "row-delete" });
 }
 
@@ -378,6 +402,7 @@ export async function saveContestProblemDraft(contestId: string, rawProblems: un
     });
   }, { maxWait: 10_000, timeout: 120_000 });
   await refreshAllDerived();
+  revalidatePublicPages();
 }
 
 export async function finalizeContestStandings(contestId: string, rawProblems: unknown[] = [], adminId?: string) {
@@ -402,6 +427,7 @@ export async function finalizeContestStandings(contestId: string, rawProblems: u
   }, { maxWait: 10_000, timeout: 120_000 });
 
   await refreshAllDerived();
+  revalidatePublicPages();
   if (!result.finalized) await logActivity(adminId, "standings.updated", "Contest", contestId, { rows: result.rows, source: "finalize-refresh" });
   return result;
 }
@@ -413,6 +439,7 @@ export async function recalculateContest(contestId: string, adminId?: string) {
     await replaceContestStandings(contestId, rows.map((row) => ({ username: row.player.username, fullName: row.player.fullName, solveVector: row.solveVector, penalty: row.penalty, notes: row.notes })), tx);
   }, { maxWait: 10_000, timeout: 120_000 });
   await refreshAllDerived();
+  revalidatePublicPages();
   await logActivity(adminId, "standings.updated", "Contest", contestId, { source: "recalculate" });
 }
 
@@ -434,11 +461,13 @@ export async function checkAndFinalizeContest(contestId: string, adminId?: strin
 }
 
 export async function updateContestVisibility(contestId: string, visibility: "PUBLIC" | "PRIVATE" | "ARCHIVED", adminId?: string) {
+  const previous = await prisma.contest.findUniqueOrThrow({ where: { id: contestId }, select: { visibility: true } });
   const contest = await prisma.contest.update({
     where: { id: contestId },
     data: { visibility },
   });
-  await logActivity(adminId, `contest.visibility.${visibility.toLowerCase()}`, "Contest", contestId, { previous: contest.visibility, new: visibility });
+  revalidatePublicPages([`/contests/${contest.slug}`]);
+  await logActivity(adminId, `contest.visibility.${visibility.toLowerCase()}`, "Contest", contestId, { previous: previous.visibility, new: visibility });
   return contest;
 }
 
@@ -453,26 +482,20 @@ async function replaceContestStandings(contestId: string, entries: EntryInput[],
   const adminUsernames = new Set(playerRoles.filter((player) => player.role === "ADMIN").map((player) => player.username.toLowerCase()));
   const ranked = rankEntries(parsedEntries, problems, adminUsernames);
 
-  // Phase 1: Prepare player data outside transaction to avoid long-running locks
-  const playersByUsername = new Map<string, { id: string; username: string }>();
-  for (const entry of ranked) {
-    const existing = await db.player.findFirst({
-      where: { username: { equals: entry.username, mode: "insensitive" } },
-      select: { id: true, username: true },
+  const rankedUsernames = ranked.map((entry) => entry.username);
+  const existingPlayers = await db.player.findMany({
+    where: { username: { in: rankedUsernames } },
+    select: { username: true },
+  });
+  const existingUsernames = new Set(existingPlayers.map((player) => player.username));
+  const newPlayers = ranked.filter((entry) => !existingUsernames.has(entry.username));
+  if (newPlayers.length) {
+    await db.player.createMany({
+      data: newPlayers.map((entry) => ({ username: entry.username, fullName: entry.fullName })),
+      skipDuplicates: true,
     });
-    if (existing) {
-      playersByUsername.set(entry.username, existing);
-    } else {
-      const created = await db.player.create({
-        data: { username: entry.username, fullName: entry.fullName },
-        select: { id: true, username: true },
-      });
-      playersByUsername.set(entry.username, created);
-    }
   }
-
-  // Phase 2: Batch operations inside transaction
-  const savedUsernames = ranked.map((entry) => playersByUsername.get(entry.username)?.username || entry.username);
+  const savedUsernames = rankedUsernames;
 
   // Batch upsert participations
   await Promise.all(
@@ -598,6 +621,7 @@ export async function updatePlayerProfile(username: string, input: unknown, admi
   }, { maxWait: 10_000, timeout: 60_000 });
 
   await logActivity(adminId, "player.edited", "Player", player.username, { previousUsername: current.username });
+  revalidatePublicPages([`/players/${player.username}`, `/players/${current.username}`]);
   return player;
 }
 
@@ -607,50 +631,65 @@ export async function deletePlayer(username: string, adminId?: string) {
     await tx.player.delete({ where: { id: player.id } });
   }, { maxWait: 10_000, timeout: 120_000 });
   await refreshAllDerived();
+  revalidatePublicPages([`/players/${username}`]);
   await logActivity(adminId, "player.deleted", "Player", username, { fullName: player.fullName });
 }
 
 async function saveContestProblems(contestId: string, problems: ParsedProblem[], db: DbClient) {
   await db.contestProblem.deleteMany({ where: { contestId } });
-  const standingPlayers = await db.contestStanding.findMany({ where: { contestId }, include: { player: true } });
-  const playersByUsername = new Map(standingPlayers.map((standing) => [standing.player.username.toLowerCase(), standing.player]));
+  const standingPlayers = await db.contestStanding.findMany({
+    where: { contestId },
+    select: {
+      playerUsername: true,
+      player: { select: { username: true, fullName: true } },
+      solveVector: true,
+      penalty: true,
+      notes: true,
+    },
+  });
+  const playersByUsername = new Map(standingPlayers.map((standing) => [standing.player.username.toLowerCase(), standing.player.username]));
+  const missingFirstSolveUser = problems.find((problem) => problem.firstSolveStatus === "ASSIGNED" && problem.firstSolveUsername && !playersByUsername.has(problem.firstSolveUsername));
+  if (missingFirstSolveUser?.firstSolveUsername) {
+    throw new Error(`First solve user "${missingFirstSolveUser.firstSolveUsername}" is not in this contest's standings.`);
+  }
 
-  for (const [index, problem] of problems.entries()) {
-    const contestProblem = await db.contestProblem.create({
-      data: {
-        contest: { connect: { id: contestId } },
-        code: problem.code.trim().toUpperCase(),
-        title: optionalString(problem.title),
-        points: problem.points,
-        sortOrder: index,
-      },
-    });
+  await db.contestProblem.createMany({
+    data: problems.map((problem, index) => ({
+      contestId,
+      code: problem.code.trim().toUpperCase(),
+      title: optionalString(problem.title),
+      points: problem.points,
+      sortOrder: index,
+    })),
+  });
 
+  const savedProblems = await db.contestProblem.findMany({
+    where: { contestId },
+    select: { id: true, code: true },
+  });
+  const problemIdsByCode = new Map(savedProblems.map((problem) => [problem.code, problem.id]));
+  const firstSolveRows: Prisma.FirstSolveCreateManyInput[] = [];
+  for (const problem of problems) {
+    const problemId = problemIdsByCode.get(problem.code.trim().toUpperCase());
+    if (!problemId) continue;
     if (problem.firstSolveStatus === "UNSOLVED") {
-      await db.firstSolve.create({
-        data: {
-          problem: { connect: { id: contestProblem.id } },
-          status: "UNSOLVED",
-        },
-      });
+      firstSolveRows.push({ problemId, status: "UNSOLVED" });
     }
     if (problem.firstSolveStatus === "ASSIGNED" && problem.firstSolveUsername) {
-      const player = playersByUsername.get(problem.firstSolveUsername);
-      if (!player) throw new Error(`First solve user "${problem.firstSolveUsername}" is not in this contest's standings.`);
-      await db.firstSolve.create({
-        data: {
-          player: { connect: { username: player.username } },
-          problem: { connect: { id: contestProblem.id } },
-          status: "ASSIGNED",
-        },
+      firstSolveRows.push({
+        problemId,
+        playerUsername: playersByUsername.get(problem.firstSolveUsername),
+        status: "ASSIGNED",
       });
     }
+  }
+  if (firstSolveRows.length) {
+    await db.firstSolve.createMany({ data: firstSolveRows });
   }
   await db.contest.update({
     where: { id: contestId },
     data: { totalPoints: problems.reduce((sum, problem) => sum + problem.points, 0) },
   });
-  await syncFirstSolveCounts(contestId, db);
   if (standingPlayers.length) {
     await replaceContestStandings(contestId, standingPlayers.map((standing) => ({
       username: standing.player.username,
@@ -669,9 +708,9 @@ async function syncFirstSolveCounts(contestId: string, db: DbClient) {
   for (const firstSolve of firstSolves) {
     if (firstSolve.playerUsername) counts.set(firstSolve.playerUsername, (counts.get(firstSolve.playerUsername) ?? 0) + 1);
   }
-  for (const [playerUsername, firstSolves] of counts) {
-    await db.contestStanding.updateMany({ where: { contestId, playerUsername }, data: { firstSolves } });
-  }
+  await Promise.all([...counts].map(([playerUsername, firstSolves]) => (
+    db.contestStanding.updateMany({ where: { contestId, playerUsername }, data: { firstSolves } })
+  )));
 }
 
 export async function refreshAllDerived(db: DbClient = prisma) {
@@ -736,6 +775,7 @@ export async function syncCompletedContests(adminId?: string, { force = true }: 
       });
     }, { maxWait: 10_000, timeout: 120_000 });
     await refreshAllDerived();
+    revalidatePublicPages();
     await prisma.contest.updateMany({
       where: { id: { in: completed.map((contest) => contest.id) } },
       data: { lastSyncedAt: startedAt, syncStatus: "SUCCESS", syncMessage: `Synced ${completed.length} completed contest${completed.length === 1 ? "" : "s"}.` },
@@ -753,6 +793,7 @@ export async function rebuildRatings(adminId?: string) {
   await recomputeRatings();
   await recalculateAllStats();
   await rebuildAchievements();
+  revalidatePublicPages();
   await logActivity(adminId, "ratings.rebuilt", "System");
 }
 
@@ -765,6 +806,7 @@ export async function rebuildLeaderboards(adminId?: string) {
     await rebuildMonthlyLeaderboard(year, month);
   }
   for (const year of years) await rebuildYearlyLeaderboard(year);
+  revalidatePublicPages();
   await logActivity(adminId, "leaderboards.rebuilt", "System");
 }
 
@@ -772,12 +814,14 @@ export async function rebuildHallOfFameOnly(adminId?: string) {
   const contests = await prisma.contest.findMany({ where: { standingsFinalizedAt: { not: null } }, select: { id: true } });
   await prisma.hallOfFame.deleteMany({ where: { contestId: { not: null } } });
   for (const contest of contests) await rebuildHallOfFame(contest.id);
+  revalidatePublicPages(["/hall-of-fame"]);
   await logActivity(adminId, "hall-of-fame.rebuilt", "System");
 }
 
 export async function rebuildEverything(adminId?: string) {
   await syncCompletedContests(adminId, { force: true });
   await refreshAllDerived();
+  revalidatePublicPages();
   await logActivity(adminId, "everything.rebuilt", "System");
 }
 

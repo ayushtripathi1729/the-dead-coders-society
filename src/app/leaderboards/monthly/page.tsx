@@ -7,7 +7,7 @@ import { Podium } from "@/components/podium";
 import { StatusBadge } from "@/components/status-badge";
 import { monthlyLeaderboard } from "@/lib/leaderboards";
 
-export const dynamic = "force-dynamic";
+export const revalidate = 60;
 
 export default async function MonthlyPage({ searchParams }: { searchParams: Promise<{ year?: string; month?: string }> }) {
   const params = await searchParams;
